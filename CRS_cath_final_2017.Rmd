@@ -1,0 +1,870 @@
+---
+title: "CRS_2017"
+author: "Cath Burke"
+date: "1 June 2017"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# CRS microbiome data analysis
+
+```{r, packages}
+library("phyloseq")
+library("ggplot2")
+library("vegan")
+library("reshape2")
+library("tidyverse")
+#library("SpiecEasi")
+#library("igraph")
+#library("mixOmics")
+
+```
+```{r, import data, echo=FALSE}
+biom<-("data/OTU_aligned_non_chim_tax_json.biom")
+map<-read.table("data/MF_Final_corrected.txt", header=TRUE, row.names=1)
+tree<-read_tree("data/phylogenetic_tree.tre")
+#import data to phyloseq
+sinus2017 <- import_biom(biom, treefilename=tree)
+sinus_map<-sample_data(map)
+sinus2017<-merge_phyloseq(sinus2017,sinus_map)
+sinus2017
+colnames(tax_table(sinus2017)) = c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+```
+
+## Alpha Diversity Analysis
+
+```{r; alpha diversity}
+##Need the unfiltered OTU table for this...
+sinus2017_data<-data.frame(sample_data(sinus2017))
+#Plot rarecurve
+t_otu_sinus2017<-as.matrix(t(otu_table(sinus2017)))
+type<-sinus2017_data$Type
+col <- c("forestgreen", "red", "hotpink", "black", "blue")
+cols<-col[sinus2017_data$Type]
+curve<-rarecurve(t_otu_sinus2017, step=1000, label=FALSE, xlim= c(0,50000), ylim=c(0,500), ylab = "OTU Count", xaxt="n")
+axis(1, xaxp=c(0, 50000, 10))
+abline(v=6000, col="red")
+#To colour by groups
+for (i in seq_along(curve)) {
+    N <- attr(curve[[i]], "Subsample")
+    lines(N, curve[[i]], col = cols[i])
+}
+#For alpha diversity - rarefy to 6000 seqs per sample
+sinus2017_rare<-rarefy_even_depth(sinus2017, sample.size=6000, rngseed=711, replace=FALSE, trimOTUs=TRUE)
+sample_data(sinus2017_rare)$Patient<-as.factor(sample_data(sinus2017_rare)$Patient)
+#remove NOST and MM samples as they actually look quite different in alpha diversity
+Sinus_only <- subset_samples(sinus2017_rare, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
+Sinus_only_CRS <- subset_samples(Sinus_only, Disease_Status == "CRS")
+plot_richness(Sinus_only, x="Disease_Status", measures=c("Observed", "Chao1","Shannon")) +
+  geom_boxplot(aes(fill=Disease_Status))+xlab("Health Status") + 
+  ylab("Diversity") + ggtitle("Alpha Diversity According to Health Status") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  theme(axis.text=element_text(size=12), axis.title = element_text (size=20, face = "bold")) + theme(plot.title = element_text(size = rel(2))) + 
+  theme(strip.text.x = element_text(size = 15)) + theme(legend.position='none')
+
+plot_richness(Sinus_only_CRS, x="NP_Status", measures=c("Observed", "Chao1","Shannon")) +
+  geom_boxplot(fill="#00BFC4") + xlab("Nasal Polyp Status") + 
+  ylab("Diversity") + ggtitle("Alpha Diversity in CRS Patients\nAccording to Nasal Polyp Status") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=20,face="bold")) + theme(plot.title = element_text(size = rel(2)))+ theme(strip.text.x = element_text(size = 15)) + theme(legend.position='none')
+
+plot_richness(Sinus_only, x="Sinus", measures=c("Chao1")) +geom_boxplot(aes(fill=Disease_Status))+xlab("Sinus")+ylab("Diversity")  +ggtitle("Alpha Diversity According to Sinus Cavity") + theme(plot.title = element_text(hjust = 0.5))+facet_grid(~Disease_Status)+xlab("Sinus Cavity")+ylab("Diversity") + theme(plot.title = element_text(hjust = 0.5)) +theme(axis.text=element_text(size=12),                     axis.title=element_text(size=20,face="bold")) + 
+  theme(plot.title = element_text(size = rel(2)))+ 
+  theme(strip.text.x = element_text(size = 15)) + 
+  theme(legend.position='none')
+
+#Now look at MM and nostril samples between groups
+sinus_nostMM<-subset_samples(sinus2017_rare, Sinus %in% c("NOST", "MM"))
+plot_richness(sinus_nostMM, x="Disease_Status", measures=c("Observed", "Chao1","Shannon")) +geom_boxplot(aes(fill=Disease_Status))+xlab("Disease Status")+ylab("Diversity")  +ggtitle("Alpha Diversity of nostril and MM According to Disease Status")
+
+plot_richness(sinus2017_rare, x="Patient", measures="Chao1") + facet_grid(~Disease_Status, scales="free")
+```
+###ANOVA Tests on Alpha diversity
+```{r}
+#USING ANOVA TO TEST ALPHA DIVERSITY
+#sinus_rare was a phyloseq object - use your filtered rarefied phyloseq object for testing
+##Convert alpha diversity estimates to a data form we can use for statistical testing
+
+sinus_alpha<-as.matrix(estimate_richness(sinus2017_rare,measures=c("Observed","Chao1","Shannon")))
+sinus_alpha<-cbind(sinus_alpha,sample_data(sinus2017_rare))
+sinus_nostMM<-subset(sinus_alpha, Sinus %in% c("NOST", "MM"))
+sinus_alpha<- subset(sinus_alpha, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
+
+#Try using nested one-way anova to test for difference between CRS and controls
+library(lme4)
+library(lmerTest)
+#Disease Status
+anova(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_alpha))
+rand(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_alpha))
+anova(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_alpha))
+rand(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_alpha))
+anova(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_alpha))
+rand(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_alpha))
+#And now in nost and MM samples
+anova(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_nostMM))
+rand(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_nostMM))
+anova(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_nostMM))
+rand(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_nostMM))
+anova(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_nostMM))
+rand(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_nostMM))
+#repeat but just within CRS patients, NP Status.
+#will need to remove MM and NOST
+sinus_alpha_CRS <- subset(sinus_alpha, Disease_Status == "CRS")
+anova(lmer(Shannon ~ NP_Status + (1|Patient), data=sinus_alpha_CRS))
+rand(lmer(Shannon ~ NP_Status + (1|Patient), data=sinus_alpha_CRS))
+anova(lmer(Observed ~ NP_Status + (1|Patient), data=sinus_alpha_CRS))
+rand(lmer(Observed ~ NP_Status + (1|Patient), data=sinus_alpha_CRS))
+anova(lmer(Chao1 ~ NP_Status + (1|Patient), data=sinus_alpha_CRS))
+rand(lmer(Chao1 ~ NP_Status + (1|Patient), data=sinus_alpha_CRS))
+
+#repeat but just within CRS patients, between Sinus Cavities
+anova(lmer(Shannon ~ Sinus + (1|Patient), data=sinus_alpha_CRS))
+rand(lmer(Shannon ~ Sinus + (1|Patient), data=sinus_alpha_CRS))
+anova(lmer(Observed ~ Sinus + (1|Patient), data=sinus_alpha_CRS))
+rand(lmer(Observed ~ Sinus + (1|Patient), data=sinus_alpha_CRS))
+anova(lmer(Chao1 ~ Sinus + (1|Patient), data=sinus_alpha_CRS))
+rand(lmer(Chao1 ~ Sinus + (1|Patient), data=sinus_alpha_CRS))
+##repeat within CRS Patients?? or within Control Patients??
+
+#repeat for Control patients, between sinus cavities
+sinus_alpha_Control <- subset(sinus_alpha, Disease_Status == "CONTROL")
+anova(lmer(Shannon ~ Sinus + (1|Patient), data=sinus_alpha_Control))
+rand(lmer(Shannon ~ Sinus + (1|Patient), data=sinus_alpha_Control))
+anova(lmer(Observed ~ Sinus + (1|Patient), data=sinus_alpha_Control))
+rand(lmer(Observed ~ Sinus + (1|Patient), data=sinus_alpha_Control))
+anova(lmer(Chao1 ~ Sinus + (1|Patient), data=sinus_alpha_Control))
+rand(lmer(Chao1 ~ Sinus + (1|Patient), data=sinus_alpha_Control))
+
+#Look at the evenness between CRS and Control
+library(tidyverse)
+Patient_evenness<-mutate(Patient_richness, evenness=Shannon/log(Observed))
+Patient_evenness<-subset(Patient_evenness, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
+anova(lmer(evenness ~ Disease_Status + (1|Patient), data=Patient_evenness))
+rand(lmer(evenness ~ Disease_Status + (1|Patient), data=Patient_evenness))
+
+#evenness for each by sinus
+Control_evenness <- mutate(Control_richness, evenness=Shannon/log(Observed))
+CRS_evenness <- mutate(CRS_richness, evenness=Shannon/log(Observed))
+
+anova(lmer(evenness ~ Sinus+ (1|Patient), data=Control_evenness))
+rand(lmer(evenness ~ Sinus+ (1|Patient), data=Control_evenness))
+anova(lmer(evenness ~ Sinus+ (1|Patient), data=CRS_evenness))
+rand(lmer(evenness ~ Sinus+ (1|Patient), data=CRS_evenness))
+
+
+```
+### Creating Taxa summaries
+```{r creating taxa summaries}
+# Defining a function tht takes phyloseq data and returns phyloseq data (OTUs are now taxonomic ranks)
+summarize_taxa <- function(counts, taxonomy) {
+  if(is.matrix(taxonomy)) {
+    #message('multiple taxonomies')
+    alply(taxonomy, 2, summarize_taxa, counts = counts, .dims = TRUE)
+  } else if(is.matrix(counts)) {
+    #message('multiple counts')
+    require('plyr')
+    apply(counts, 2, summarize_taxa, taxonomy = taxonomy)
+  } else {
+    #message('summarize')
+    tapply(counts, taxonomy, sum)
+  }
+}
+
+phyloseq_summarize_taxa <- function(psdata, taxonomic.ranks = rank_names(psdata)) {
+if(length(taxonomic.ranks) > 1) {
+names(taxonomic.ranks) <- taxonomic.ranks
+llply(taxonomic.ranks, phyloseq_summarize_taxa, psdata = psdata)
+} else {
+taxa <- as(tax_table(psdata)[, taxonomic.ranks], 'character')
+sum_tax_table <- summarize_taxa(as(otu_table(psdata), 'matrix'), taxa)
+phyloseq(otu_table(sum_tax_table, taxa_are_rows = TRUE),
+sample_data(psdata, FALSE))
+}
+}
+#Make a for loop to create a summarised table on all taxonomic levels. Doesn't work with Domain level taxonomy, remove that from the tax_ranks list.
+tax_ranks<-rank_names(sinus2017_rare)[2:7]
+for (i in tax_ranks){
+  nam <- paste("sinus", i, sep = "_")
+  assign(nam, (phyloseq_summarize_taxa(sinus2017, taxonomic.ranks = i)))
+}
+#should now have phyloseq objects named trains_"rank", where rank is the taxonomic level summarised by.
+
+#Create columns of sample data to bind to tables below
+sam_dat<-sample_data(sinus_Phylum)[order(rownames(sample_data(sinus_Phylum)))]
+
+#Make tables for plotting at each taxonomic level.  For loop will produce a table for each level, and bind sample data.
+for (i in tax_ranks){
+  totu <- paste("totu", i, sep = "_")
+  as.data.frame(t(otu_table(get(paste("sinus_",i, sep=""))))) -> df
+  assign(totu, cbind(df[order(rownames(df)),],sam_dat))
+}
+
+#Tax tables are not retained!  Will try to construct one for Genus object
+genus_tax<-data.frame(tax_table(sinus2017_rare)) %>% 
+  select(Domain, Phylum, Class, Order, Family, Genus) %>%
+  unique() %>%
+  filter(Genus!="g__" & !is.na(Genus))%>%
+  mutate_if(is.factor, as.character)
+row.names(genus_tax)<-genus_tax$Genus
+genus_tax<-tax_table(as.matrix(genus_tax))
+sinus_Genus<-merge_phyloseq(sinus_Genus,genus_tax)
+
+#Remove unclassified genus OTU
+unclass_g<-taxa_names(sinus_Genus)[-1]
+sinus_Genus<-prune_taxa(unclass_g, sinus_Genus)
+#Append tax_table to phyloseq object
+```
+
+###Plot abundances of Top OTUS on rarefied data
+```{r}
+Top15OTUS_rare <- names(sort(taxa_sums(sinus2017), TRUE)[1:15])
+Top15_rare <- prune_taxa(Top15OTUS_rare, sinus2017)
+Top15_rare
+Top10OTUS_rare <- names(sort(taxa_sums(sinus2017), TRUE)[1:10])
+Top10_rare <- prune_taxa(Top10OTUS_rare, sinus2017)
+plot_bar(Top15_rare,x="Family", fill="Patient")
+
+#Better way
+otu_smelt<-psmelt(sinus2017_rare)
+otu_smelt$Patient<-factor(otu_smelt$Patient)
+sinus_plots<-otu_smelt %>%
+  mutate(rel_abund=Abundance/6000*100) %>%
+  filter(Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
+phyla_plot<-sinus_plots %>% 
+  group_by(Patient,OTU) %>%
+  mutate(av_rel_abund=mean(rel_abund))%>%
+  distinct(Patient,OTU, .keep_all=TRUE)
+  
+ggplot(phyla_plot, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in sinuses only")
+
+#Check out nostrils
+nost_mm_plot<-otu_smelt %>%
+  mutate(rel_abund=Abundance/6000*100) %>%
+  filter(Sinus %in% c("NOST","MM"))
+nost_mm_phyla<-nost_mm_plot %>% 
+  group_by(Patient,OTU) %>%
+  mutate(av_rel_abund=mean(rel_abund))%>%
+  distinct(Patient,OTU, .keep_all=TRUE)
+ggplot(nost_mm_phyla, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in nostril and MM only")
+
+#Look at genera level
+genus_plots<-sinus_plots %>% group_by(Disease_Status,Patient,Sinus,Sample,Family,Genus)%>%
+  summarise(sum_abund=sum(rel_abund)) %>%
+  group_by(Patient,Genus)%>%
+  mutate(av_abund=mean(sum_abund))%>%
+  distinct(Patient, Genus, .keep_all=TRUE)%>%
+  filter(av_abund>1)
+genus_plots$Sample<-as.factor(genus_plots$Sample)  
+ggplot(genus_plots,aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average Genus abundance per patient in sinuses only")
+
+
+
+genus_plot_sig_sinus<-sinus_plots %>%
+  filter(Genus %in% c("g__Corynebacterium","g__Alloiococcus","g__Staphylococcus") | Family=="f__Enterobacteriaceae") %>%
+  group_by(Disease_Status,Patient,Sinus,Sample,Genus)%>%
+  summarise(sum_abund=sum(rel_abund)) %>%
+  group_by(Patient,Genus)%>%
+  mutate(av_abund=mean(sum_abund))%>%
+  distinct(Patient, Genus, .keep_all=TRUE)%>%
+  filter(Genus %in% c("g__","g__Corynebacterium","g__Alloiococcus","g__Staphylococcus"))
+  
+  
+  
+  group_by(Patient,OTU) %>%
+  mutate(av_rel_abund=mean(rel_abund))%>%
+  distinct(Patient,OTU, .keep_all=TRUE)
+
+ggplot(genus_plot_sig_sinus, aes(x=Patient, y=av_abund, fill=Genus)) + geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average relative abudnance for significantly different genera per patient (sinuses only)")
+#check distribution of Alloiococcus
+#Boxplots of sum of all Allociococcus OTU rel abudances
+test<-sinus_plots %>% filter(Genus=="g__Alloiococcus") %>%
+  group_by(Disease_Status,Patient,Sample)%>%
+  summarise(sum_abund=sum(rel_abund))
+  ggplot(test,aes(x=Patient, y=sum_abund))+geom_boxplot()+facet_grid(.~Disease_Status, scales="free")
+
+test2<-sinus_plots %>% filter(Genus=="g__Alloiococcus") %>%
+  group_by(Disease_Status,Patient,Sample)%>%
+  summarise(sum_abund=sum(rel_abund))%>%
+  group_by(Patient)%>%
+  mutate(mean_al=mean(sum_abund)) %>% arrange(Patient) %>%
+  distinct(Patient, .keep_all=TRUE)
+ggplot(test2, aes(x=Patient, y=mean_al))+geom_bar(stat="identity")+
+  facet_grid(~Disease_Status, scales="free")
+
+#Look at Alloiococcus in MM and NOST compared to sinuses
+Alloi_plot<-otu_smelt %>%
+  mutate(rel_abund=Abundance/6000*100) %>%
+  filter(Genus %in% c("g__Alloiococcus","g__Corynebacterium")) %>%
+  ggplot(aes(x=Patient,y=rel_abund, fill=Genus)) + 
+  geom_bar(stat="identity") + facet_grid(Sinus~Disease_Status, scales="free")
+
+Top20<-otu_smelt %>% 
+  mutate(rel_abund=Abundance/6000*100) %>%
+  group_by(Patient,OTU) %>%
+  mutate(av_abund=mean(rel_abund)) %>%
+  arrange(Patient)%>%
+  group_by(Patient)%>%
+  distinct(Patient,OTU, .keep_all=TRUE)%>%
+  top_n(20)
+  
+ggplot(Top20, aes(x=Patient,y=av_abund, fill=Genus))+geom_bar(stat="identity") + theme(legend.key.size = unit(0.5,"line"),legend.title = element_blank()) + guides(fill=guide_legend(ncol=1))+facet_grid(.~Disease_Status, scales="free")+ggtitle("Top 20 OTUs per Patient")
+
+data.frame(Top20 %>%
+  arrange(Disease_Status, desc(av_abund)) %>%
+  group_by(Disease_Status,Genus) %>%
+  mutate(av_genera=mean(av_abund)) %>%
+  distinct(Disease_Status,Genus, .keep_all=TRUE) %>%
+  select(Patient,Phylum,Genus,Disease_Status,av_abund))
+  
+top20_sinus<-otu_smelt %>% 
+  mutate(rel_abund=Abundance/6000*100) %>%
+  group_by(Patient,Sinus,OTU) %>%
+  mutate(av_abund=mean(rel_abund)) %>%
+  group_by(Patient,Sinus) %>%
+  top_n(20)
+
+ggplot(top20_sinus, aes(x=Sinus,y=av_abund, fill=Genus))+geom_bar(stat="identity", col="black") + theme(legend.key.size = unit(0.5,"line"),legend.title = element_blank()) + guides(fill=guide_legend(ncol=1))+facet_grid(Sinus~Disease_Status, scales="free")+ggtitle("Top 20 OTUs per Sinus")
+
+#Per sinus by patient
+top20_sinus %>%
+  ggplot(aes(x=Sample,y=rel_abund, fill=Genus))+geom_bar(stat="identity", col="black") + theme(legend.key.size = unit(0.5,"line"),legend.title = element_blank(),axis.text.x = element_text(angle = 90, hjust = 1, size=4))+facet_grid(Disease_Status~Patient,scales="free")+ guides(fill=guide_legend(ncol=1))
+
+
+Disease_Family_10 <- plot_bar(Top10_rare,x="Disease_Status", fill="Family")
+Disease_Family_10 + geom_bar(aes(color=Family, fill=Family), stat="identity", position="stack")
+#plot of sinuses as per top families, great graph to show that there are certanly
+#differences in CRS v Control, but keep in mind that there are more samples from CRS
+Sinus_Family_15 <- plot_bar(Top15_rare,x="Sinus", fill="Family", facet_grid=~Disease_Status)
+Sinus_Family_15  + geom_bar(aes(color=Family, fill=Family), stat="identity", position="stack")
+
+```
+#Beta diversity and betadiversity analyses.
+```{r}
+#For PCoA plotting and PERMANOVA analysis, we will use rarefaction.
+#check seq run
+#Trying alternative of filtering rare taxa then rarefying.
+sinus2017_fil<-filter_taxa(sinus2017, function(x) sum(x)>5 & sum(x>0)>0.1*length(x),TRUE)
+sinus2017_fil2<-subset_samples(sinus2017_fil, Disease_Status %in% c("CONTROL","CRS"))
+sinus2017_fil_rare<-rarefy_even_depth(sinus2017_fil2, 6000, rngseed=711, replace=FALSE, trimOTUs=TRUE)
+sinus2017_rare
+#I think I will go with the original way of doing this below - rarefy then filter.
+#Remove rare OTUs not seen more than 5 times, and present in at least 10% of samples
+sinus2017_rare_fil1<-filter_taxa(sinus2017_rare, function(x) sum(x)>5 & sum(x>0)>0.1*length(x),TRUE)
+sinus2017_rare_fil2 <- subset_samples(sinus2017_rare_fil1, Disease_Status %in% c("CONTROL","CRS"))
+sinus2017_rare_wuf<-distance(sinus2017_rare_fil2,method="wunifrac", type="samples")
+
+#Now MM and NOST samples will affect
+Sinus_only_fil<-subset_samples(sinus2017_rare_fil2, Sinus %in% c("ETH","MAX","FRO","SPH"))
+Sinus_only_fil_CRS<-subset_samples(sinus2017_rare_fil2, Disease_Status =="CRS")
+Sinus_only_fil_control<-subset_samples(sinus2017_rare_fil2, Disease_Status =="CONTROL")
+#Now calculate weighted unifrac distances
+#weighted unifrac of all samples
+#use for between CRS and Control tests
+#weighed unifrac for all
+sinus_wuf<-distance(Sinus_only_fil, method="wunifrac", type="samples")
+#Then ordinate and plot - note that you can calculate the distances within 
+#the ordinate command by including the distance type, or you can call previously 
+#calculated distances, e.g. sinus_wuf above
+
+#ordinating all patients
+ord_sinus_wuf<-ordinate(Sinus_only_fil, method="PCoA", distance=sinus_wuf)
+
+
+#plotting disease status and NP/run_no/PCR_no
+plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="Patient", shape="Disease_Status")
+sample_data(Sinus_only_fil)$run_no<-as.factor(sample_data(Sinus_only_fil)$run_no)
+plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="Disease_Status", shape="run_no")
+#plot_ordination(rare_sinus2017_filter_cont_rem, ord_sinus_wuf,color="PCR_no", shape="Disease_Status")
+
+NP_PCoA <-  plot_ordination(Sinus_only_fil, ord_sinus_wuf, color="NP_Status", shape="Disease_Status")
+NP_PCoA <- NP_PCoA + ggtitle("PCoA of Weighted Unifrac Distances Based on Health Status - sinus only") +theme(plot.title = element_text(size = rel(2))) +theme(legend.text=element_text(size=14)) +theme(legend.title=element_text(size=16)) +theme(axis.text=element_text(size=15)) +theme(axis.title=element_text(size=20))
+NP_PCoA <- NP_PCoA + scale_shape_discrete(name  ="Health Status",
+                               breaks=c("CONTROL", "CRS"),
+                               labels=c("Healthy", "Chronic \nRhinosinusitis"))
+NP_PCoA <- NP_PCoA + labs(colour = "Nasal Polyp Status") + geom_point(size = 1
+                                                                      )
+ggsave("PCoA_NP.png", width = 25, height = 25, units = "cm", dpi = 2000)
+
+#now look at plot as coloured by sinus, we are interested in MM and NOst samples as well
+Sinus_PCoA <- plot_ordination(Sinus_only_fil, ord_sinus_wuf, color="Sinus", shape="Disease_Status")
+Sinus_PCoA <- Sinus_PCoA + ggtitle("PCoA of Weighted Unifrac Distances Based on Sinus") +theme(plot.title = element_text(size = rel(2))) +theme(legend.text=element_text(size=14)) +theme(legend.title=element_text(size=16)) +theme(axis.text=element_text(size=15)) +theme(axis.title=element_text(size=20))
+Sinus_PCoA <- Sinus_PCoA + geom_point(size = 1) + labs(colour = "Sinus") + scale_shape_discrete(name  ="Health Status",
+                                                                                                breaks=c("CONTROL", "CRS"),
+                                                                                                labels=c("Healthy", "Chronic \nRhinosinusitis"))
+#Now look at just nost and MM samples
+nost_mm_fil<-subset_samples(sinus2017_rare_fil2, Sinus %in% c("NOST","MM"))
+nost_wuf<-distance(nost_mm_fil, method="wunifrac", type="samples")
+ord_nost_wuf<-ordinate(nost_mm_fil, method="PCoA", distance=nost_wuf)
+#plotting disease status and NP/run_no/PCR_no
+plot_ordination(nost_mm_fil, ord_nost_wuf,color="Disease_Status", label="Patient")+ggtitle("Weighted unifrac PCoA from nost and MM swabs")
+
+#Boxplots of intrapatient differences
+patient_distances <- read.csv("data/intra_patient_dist_wu.csv", header=TRUE, check.names = FALSE)
+patient_distances<- melt(patient_distances)
+colnames(patient_distances)<-c("Patient","distance")
+status<-sample_data(sinus2017_rare_fil2)[,c("Patient","Disease_Status")] %>% distinct(Patient, .keep_all = TRUE)
+patient_distances<-merge(patient_distances,data.frame(status),by="Patient")
+patient_distances$Patient<-as.factor(status$Patient)
+
+ggplot(patient_distances, aes(x=Disease_Status, y=distance, fill=Disease_Status))+geom_boxplot()+ ggtitle("Intra-patient Weighted Unifrac Distances") + xlab("Health Status") +ylab("Unifrac Distance") + theme(plot.title = element_text(hjust = 0.5)) +theme(axis.text=element_text(size=12),                                 axis.title=element_text(size=14)) + theme(plot.title = element_text(size = 16)) 
+
+distance_boxplot <- distance_boxplot + scale_x_discrete(breaks = c("Contol", "CRS"), labels = c("Healthy","CRS")) + xlab(NULL) + theme(legend.position = "bottom", legend.background = element_rect(color = "white", 
+                                                                                                                                                                                                    fill = "white", size = 1, linetype = "solid"), legend.direction = "horizontal")
+```
+##Compare MM and NOST to sinuses within patients - are nostril or MM samples representative of the sinus communities?
+```{r}
+#Use weighted unifrac distance matrix generated in phyloseq as input.
+test2<-sinus2017_rare_wuf
+test2<-as.matrix(test2)
+test2_m<-melt(test2)[melt(upper.tri(test2))$value,]
+#test2_m is now all comparisons with no duplicates
+#Need to add data on Patient and disease status
+test2_m$P1<-sub("15[0]+([0-9]+)[A-Z]+","\\1",test2_m$Var1)
+test2_m$P1<-sub("159([0-9]+)[A-Z]+","\\1",test2_m$P1)
+test2_m$P2<-sub("15[0]+([0-9]+)[A-Z]+","\\1",test2_m$Var2)
+test2_m$P2<-sub("159([0-9]+)[A-Z]+","\\1",test2_m$P2)
+test2_m$S1<-sub("[0-9]+([A-Z]+)","\\1",test2_m$Var1)
+test2_m$S2<-sub("[0-9]+([A-Z]+)","\\1",test2_m$Var2)
+disease_status<-data.frame(unique(sample_data(sinus2017_rare_fil2)[,c("Patient","Disease_Status")]))
+test2_m$D1<-disease_status[match(test2_m$P1, disease_status$Patient),2]
+test2_m$D2<-disease_status[match(test2_m$P2, disease_status$Patient),2]
+#Now should be able to subset any way I want with dplyr
+#Try getting all intrapersonal comparisons, for sinuses only, and plotting by disease status.
+test<- test2_m %>% filter(!S1 %in% c("NOST","LMM","RMM") & !S2 %in% c("NOST","LMM","RMM")) %>%
+  filter(P1==P2) 
+ggplot(test, aes(x=D1, y=value))+geom_boxplot()
+#Now get all nost or MM comparisons to sinuses intrapersonal comparisons, and compare to sinus vs sinus comparisons intrapersonal
+intra2<-test2_m %>% filter(P1==P2) %>%
+  mutate(comp=ifelse(S1=="NOST" | S2=="NOST","NvS","SvS"),comp=ifelse(S1 %in% c("LMM","RMM") | S2 %in% c("LMM","RMM"),"MMvS",comp))
+
+ggplot(intra2, aes(x=comp, y=value, fill=D1))+geom_boxplot() + 
+  facet_wrap(~P1,5,7,scales="free") +
+  theme(axis.text.x = element_text(size = 5,angle=90,hjust = 1),strip.text.x = element_text(size = 5))
+
+ggplot(intra2, aes(x=comp, y=value, fill=D1))+geom_boxplot() +
+  facet_grid(~D1,scales="free") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title="Intra-patient distances between MM and sinuses, nostril and sinuses\nand sinus vs sinus", x="comparison", y="weighted unifrac distance")
+#Next need to do a test for significant difference between comparisons.
+intra2$P1<-as.factor(intra2$P1)
+intra2$comp<-as.factor(intra2$comp)
+anova(lmer(value ~ comp + D1 + (1|P1), data=intra2))
+#subset to CRS only and repeat
+intra2_CRS<-intra2 %>% filter(D1=="CRS")
+anova(lmer(value ~ comp + (1|P1), data=intra2_CRS))
+#subset to control only and repeat
+intra2_control<-intra2 %>% filter(D1=="CONTROL")
+anova(lmer(value ~ comp + (1|P1), data=intra2_control))
+
+#No significant difference in distances between MM or Nost to sinuses as compared to sinus to sinus.
+
+#Could repeat for unweighted unifrac??
+sinus2017_rare_uwuf<-distance(sinus2017_rare_fil2,method="uwunifrac", type="samples")
+uwuf<-as.matrix(sinus2017_rare_uwuf)
+uwuf_m<-melt(uwuf)[melt(upper.tri(uwuf))$value,]
+
+#uwuf_m is now all comparisons with no duplicates
+#Need to add data on Patient and disease status
+uwuf_m$P1<-sub("15[0]+([0-9]+)[A-Z]+","\\1",uwuf_m$Var1)
+uwuf_m$P1<-sub("159([0-9]+)[A-Z]+","\\1",uwuf_m$P1)
+uwuf_m$P2<-sub("15[0]+([0-9]+)[A-Z]+","\\1",uwuf_m$Var2)
+uwuf_m$P2<-sub("159([0-9]+)[A-Z]+","\\1",uwuf_m$P2)
+uwuf_m$S1<-sub("[0-9]+([A-Z]+)","\\1",uwuf_m$Var1)
+uwuf_m$S2<-sub("[0-9]+([A-Z]+)","\\1",uwuf_m$Var2)
+
+uwuf_m$D1<-disease_status[match(uwuf_m$P1, disease_status$Patient),2]
+uwuf_m$D2<-disease_status[match(uwuf_m$P2, disease_status$Patient),2]
+
+#Try getting all intrapersonal comparisons, for sinuses only, and plotting by disease status.
+uwuf_intra<- uwuf_m %>% filter(!S1 %in% c("NOST","LMM","RMM") & !S2 %in% c("NOST","LMM","RMM")) %>%
+  filter(P1==P2) 
+ggplot(uwuf_intra, aes(x=D1, y=value, fill=D1))+geom_boxplot()
+ggplot(uwuf_intra, aes(x=P1, y=value, fill=D1))+geom_boxplot()+
+  facet_wrap(~D1,2,1, scales="free")
+#Now get all nost or MM comparisons to sinuses intrapersonal comparisons, and compare to sinus vs sinus comparisons intrapersonal
+uwuf_intra2<-uwuf_m %>% filter(P1==P2) %>%
+  mutate(comp=ifelse(S1=="NOST" | S2=="NOST","NvS","SvS"),comp=ifelse(S1 %in% c("LMM","RMM") | S2 %in% c("LMM","RMM"),"MMvS",comp))
+
+ggplot(uwuf_intra2, aes(x=comp, y=value, fill=D1))+geom_boxplot() + 
+  facet_wrap(~P1,5,7,scales="free") +
+  theme(axis.text.x = element_text(size = 5,angle=90,hjust = 1),strip.text.x = element_text(size = 5))
+
+ggplot(uwuf_intra2, aes(x=comp, y=value))+geom_boxplot() +
+  facet_grid(~D1,scales="free") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#Next need to do a test for significant difference between comparisons.
+uwuf_intra2$P1<-as.factor(intra2$P1)
+uwuf_intra2$comp<-as.factor(intra2$comp)
+anova(lmer(value ~ comp + D1 + (1|P1), data=uwuf_intra2))
+#subset to CRS only and repeat
+uwuf_intra2_CRS<-uwuf_intra2 %>% filter(D1=="CRS")
+anova(lmer(value ~ comp + (1|P1), data=uwuf_intra2_CRS))
+#subset to control only and repeat
+uwuf_intra2_control<-uwuf_intra2 %>% filter(D1=="CONTROL")
+anova(lmer(value ~ comp + (1|P1), data=uwuf_intra2_control))
+#sig dif for CRS but not control - need to do a post-hoc test to see which is sig dif of the three.
+
+#Correlate median wunifrac distance intra patient to snot22 score
+snot<-unique(data.frame(sample_data(sinus2017_rare_fil2)[,c("Patient","SNOT22")], row.names=NULL))
+
+test<-test2_m %>% filter (P1==P2) %>%
+  group_by(P1) %>%
+  summarise(med_dis=median(value))
+test<-merge(test,snot,by=1)
+ggplot(test, aes(x=SNOT22, y=med_dis))+geom_point()+
+  geom_smooth(method=lm, fullrange=TRUE)+labs(y="median intrapatient weighted unifra c distance", y="SNOT22 score", title="Correlation of SNOT22 vs median intrapatient wunifrac")
+corr_snot_dist <- cor.test(x=test$SNOT22, y=test$med_dis, method = 'spearman')
+corr
+```
+##Plots of correlations to SNOT-22 scores.
+```{r, correlation}
+#Snot-22 scores were used for multivariate correlation against OTUs.
+#Results from Elizabeth's analysis in QIIME using Spearman's Rho.
+snot_cor<-read.csv("data/snot22_cor.csv", header=TRUE)
+snot_cor<-c("114621","134265","217734","269907","377613","410908","441265","538000","551602","782953","851704","851938","860145","865469","882921","892891","933546","949304","956702","965048","1066621","1075821","1077373","1078207","1084865","1101451","1105876","1111294","4375664","4465803","New.CleanUp.ReferenceOTU3568","New.ReferenceOTU138","New.ReferenceOTU143","New.ReferenceOTU153","New.ReferenceOTU28","New.ReferenceOTU68","New.ReferenceOTU76","New.ReferenceOTU83","New.ReferenceOTU94")
+cor_otu_data<-otu_smelt %>%
+  mutate(rel_abund=Abundance/6000*100) %>%
+  arrange(OTU)%>%
+  filter(OTU %in% snot_cor)
+
+
+name<-paste(cor_otu_data$OTU[1],corr_otu_data$Genus[1], sep=" ")
+#Plot all otus
+tax_name<-tax_table(sinus2017)[snot_cor,c("Family","Genus")]
+tax_name<-data.frame(tax_name[order(row.names(tax_name)),])
+plot<-ggplot(cor_otu_data,aes(x=rel_abund, y=SNOT22))+geom_point()+
+  geom_smooth(method=lm, fullrange=TRUE)+labs(x="relative abundnace (%)")+ylim(0,100)+facet_wrap(~OTU,7,6)
+  
+plot + geom_text(aes(x=50, y=100,label=paste(Family,Genus)),size=2)
+#Plot ind otus
+indplot<-cor_otu_data %>% filter(OTU %in% c("410908","1075821")) %>%
+  ggplot(aes(x=rel_abund, y=SNOT22)) + 
+  geom_point(aes(color=Genus))+labs(title="Corynebacterium 410908, SNOT22 vs abundance",x="relative abundance (%)")+ylim(0,100)
+
+indplot + facet_wrap(~SNOT22,7,5)
+
+corr <- cor.test(x=corr_data$rel_abund, y=corr_data$SNOT22, method = 'spearman')
+corr
+
+
+
++geom_text(aes(label=Patient, size=0.05))
+
+for (i in cor_otu){
+  data<-cor_otu_data %>% filter(OTU==i)
+  name<-paste(i,data$Genus[1],"vs SNOT22",sep=" ")
+  plot<-ggplot(data,aes(x=rel_abund, y=SNOT22))+geom_point()+ggtitle(paste(i,name,"vs SNOT22",sep=" "))
+  print(plot)
+}
+
+#Now collapse to Genus level and plot for sig Genera?
+
+cor_genera<-otu_smelt %>%
+  mutate(rel_abund=Abundance/6000*100) %>%
+  arrange(OTU) %>% filter(Genus %in% c("g__Streptococcus", "g__Corynebacterium", "g__Haemophilus","g__Bulleidia","g__Micrococcus","g__Actinomyces") | (Family %in% c("f__Enterobacteriaceae","f__Neisseriaceae","f__Rhodobacteraceae") & Genus=="g__"))
+
+genera_sums<-cor_genera %>% group_by(Sample,Family,Genus) %>%
+  summarise(gen_sums=sum(rel_abund),snot22=mean(SNOT22))
+
+gen_plot<-ggplot(genera_sums,aes(x=gen_sums, y=snot22))+geom_point()+
+  geom_smooth(method=lm, fullrange=TRUE)+labs(x="relative abundance (%)")+ylim(0,100)+facet_wrap(~Family,3,3)
+gen_plot+geom_text(aes(x=50, y=90,label=Genus),size=3)
+
+#Individual Genera
+genera_sums %>% filter(Genus=="g__Corynebacterium") %>%
+  ggplot(aes(x=gen_sums, y=snot22))+geom_point()+
+  labs(title="Corynebacterium",x="relative abundance (%)")+ylim(0,100)+facet_wrap(~snot22,5,7)
+```
+
+
+
+
+###Differential abundance using DESeq
+```{r, diff abund DESeq}
+library(DESeq2)
+sample_data(sinus2017_fil2)$Patient<-as.factor(sample_data(sinus2017_fil2)$Patient)
+sinus_dds<-phyloseq_to_deseq2(sinus2017_fil2, ~ Disease_Status:Patient + Disease_Status, ignoreRank=TRUE)
+coldata <- data.frame(sample_data(sinus2017_fil2))
+head(coldata)
+m1 <- model.matrix(~ Disease_Status:Patient + Disease_Status, coldata)
+colnames(m1)
+m1 <- m1[,colSums(m1)>0]
+sinus_dds<-estimateSizeFactors(sinus_dds, type="iterate")
+#Error in estimateSizeFactorsIterate(object) : 
+ # iterative size factor normalization did not converge
+sinus_dds<-estimateDispersions(sinus_dds, fitType = "local")
+#Error in .local(object, ...) : 
+# first call estimateSizeFactors or provide a normalizationFactor matrix before estimateDispersions
+sinus_dds<-nbinomWaldTest(sinus_dds, modelMatrix = m1)
+#Error in rowRanges(x) : 
+#  no slot of name "rowRanges" for this object of class "DESeqDataSet"
+```
+##Metagenome Seq for diff abundance
+```{r}
+library(metagenomeSeq)
+sinus_mgs<-phyloseq_to_metagenomeSeq(sinus2017_fil2)
+#Calculate percentile for CSS normalisation
+p<-cumNormStatFast(sinus_mgs, pFlag=TRUE)
+sinus_mgs_norm<-cumNorm(sinus_mgs, p = p)
+#Look at a subset of normalised counts
+MRcounts(sinus_mgs_norm, norm = TRUE, log = TRUE)[1:10, 1:10]
+#Set up model formula for testing
+pd<-pData(sinus_mgs_norm)
+#At this point, can't have more than one factor in the model for this test!
+mod<-model.matrix(~1 + Disease_Status, data = pd)
+sinusres1 = fitFeatureModel(sinus_mgs_norm, mod)
+head(MRcoefs(sinusres1))
+```
+
+
+##Network analysis using the Spiec-Easi package
+```{r, network analysis}
+#Using rarefied OTU table, filtered to remove ?? Check with Elizabeth
+se_mb_sinus2017<-spiec.easi(sinus2017, method='mb', lambda.min.ratio=1e-2,
+                           nlambda=20, icov.select.params=list(rep.num=50))
+ig_sinus2017<-adj2igraph(se_mb_sinus2017$refit,vertex.attr=list(name=taxa_names(sinus2017)))
+plot_network(ig_sinus2017, sinus2017, type='taxa', color="Class", label=NULL)
+#Now separate disease from controls
+#Disease network
+crs_phy<-subset_samples(sinus2017, Disease_Status=="CRS")
+se_mb_crs<-spiec.easi(crs_phy, method='mb', lambda.min.ratio=1e-2,
+                           nlambda=20, icov.select.params=list(rep.num=50))
+ig_crs<-adj2igraph(se_mb_crs$refit,vertex.attr=list(name=taxa_names(crs_phy)))
+plot_network(ig_crs, crs_phy, type='taxa', color="Class", label=NULL)
+#Control network
+control_phy<-subset_samples(sinus2017, Disease_Status=="CONTROL")
+se_mb_control<-spiec.easi(control_phy, method='mb', lambda.min.ratio=1e-2,
+                           nlambda=20, icov.select.params=list(rep.num=50))
+ig_control<-adj2igraph(se_mb_control$refit,vertex.attr=list(name=taxa_names(control_phy)))
+plot_network(ig_control, control_phy, type='taxa', color="Class", label=NULL)
+#Maybe would make more sense at the Genera level - use summarised OTU table at Genera level.
+#Control at genera level
+control_gen<-subset_samples(sinus_Genus, Disease_Status=="CONTROL")
+se_mb_cnt_gen<-spiec.easi(control_gen, method='mb', lambda.min.ratio=1e-2,
+                           nlambda=20, icov.select.params=list(rep.num=50))
+ig_cnt_gen<-adj2igraph(se_mb_cnt_gen$refit,vertex.attr=list(name=taxa_names(control_gen)))
+plot_network(ig_cnt_gen, control_gen, type='taxa', color="Class")
+
+#CRS at genera level
+
+crs_gen<-subset_samples(sinus_Genus, Disease_Status=="CRS")
+se_mb_crs_gen<-spiec.easi(crs_gen, method='mb', lambda.min.ratio=1e-2,
+                           nlambda=20, icov.select.params=list(rep.num=50))
+ig_crs_gen<-adj2igraph(se_mb_crs_gen$refit,vertex.attr=list(name=taxa_names(crs_gen)))
+plot_network(ig_crs_gen, crs_gen, type='taxa', color="Phylum")
+
+#Some genera coming up as highly connected that are only in one subject.  I will limit to the sphenoid 
+crs_sph<-subset_samples(sinus2017, Disease_Status=="CRS" & Sinus=="SPH")
+#Remove taxa seen less than 10 times
+crs_sph<-filter_taxa(crs_sph, function(x) sum(x)<9, prune=TRUE)
+#Network for disease
+se_mb_crs_sph<-spiec.easi(crs_sph, method='mb', lambda.min.ratio=1e-2,
+                           nlambda=20, icov.select.params=list(rep.num=50))
+ig_crs_sph<-adj2igraph(se_mb_crs_sph$refit,vertex.attr=list(name=taxa_names(crs_sph)))
+plot_network(ig_crs_sph, crs_sph, type='taxa', color="Family", label=NULL)
+
+#Now control
+cnt_sph<-subset_samples(sinus2017, Disease_Status=="CONTROL" & Sinus=="SPH")
+#Remove taxa seen less than 10 times
+cnt_sph<-filter_taxa(cnt_sph, function(x) sum(x)<9, prune=TRUE)
+#Network for disease
+se_mb_cnt_sph<-spiec.easi(cnt_sph, method='mb', lambda.min.ratio=1e-2,
+                           nlambda=20, icov.select.params=list(rep.num=50))
+ig_cnt_sph<-adj2igraph(se_mb_cnt_sph$refit,vertex.attr=list(name=taxa_names(cnt_sph)))
+plot_network(ig_cnt_sph, cnt_sph, type='taxa', color="Family", label=NULL)
+
+```
+##Use Mixomics for PCA plotting (unsupervised clustering) and PLS Discriminat Anlysis (PLS-DA)
+```{r, mixomics}
+#filter for low sequence counts and rare OTUs
+sinus2017_fil1<-filter_taxa(sinus2017, function(x) sum(x > 1) > (0.1*length(x)), TRUE)
+sinus2017_fil2<-prune_samples(sample_sums(sinus2017_fil1)>=6000,sinus2017_fil1)
+sinus2017_fil2<-subset_samples(sinus2017_fil2, Type %in% c("CONTROL","CRS"))
+#First need to get data into workable format for mixomics - convert to dataframe and transpose.
+otu<-data.frame(t(otu_table(sinus2017_fil2)),check.names=FALSE)
+sinus2017_fil2_data<-data.frame(sample_data(sinus2017_fil2))
+#Sample data is defined in the dataframe sinus2017_data
+#Add pseudo count to deal with 0 values
+otu_p<-otu+1
+
+#Now need to transform raw counts.
+
+mock_otu<-matrix(c(0,3,7,5,2,9,3,1,10,0,0,5,2,6,2,5),nrow=4, ncol=4, dimnames=list(c("S1","S2","S3","S4"),c("OTU1","OTU2","OTU3","OTU4")))
+
+TSS.divide = function(x){
+ x/sum(x)
+}
+data.TSS<- t(apply(mock_otu, 1, TSS.divide))
+otu_tss <-t(apply(otu_p, 1, TSS.divide))
+#Folllowing oral microbiome tutorial from mixOmics, but applied to Sinus data
+#Set up Y as factor showing body sites, and sample as a factor showing individuals
+Y<- as.factor(sinus2017_fil2_data$Disease_Status)
+summary(Y)
+sample<-as.factor(sinus2017_fil2_data$Patient)
+#Now do a PCA with ILR on TSS transformed data
+pca_sinus<-pca(X=otu_tss, ncomp=10, logratio = 'ILR', multilevel=sample)
+plot(pca_sinus)
+#plotting the first components 
+plotIndiv(pca_sinus,  comp = c(1,2), 
+          pch = 16, ind.names = F, group = Y, col.per.group = color.mixo(1:2),
+          legend = TRUE
+          )
+#Tuning sPLS-DA
+#plsda
+data.plsda <- plsda(X = otu_tss, Y, ncomp = 5)
+# check performance
+perf.plsda <- perf(data.plsda, validation = 'loo', folds = 5,
+                    progressBar = FALSE)
+plot(perf.plsda, overlay = 'measure', sd=TRUE)
+
+plotIndiv(data.plsda , comp = c(1,2),
+          group = Y, ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE, title = 'Sinus_16S, PLSDA comp 1 - 2')
+
+# set the tuning grid for some possible values of keepX
+list.keepX<- c(5:10, seq(15, 50, 5), seq(60, 100, 10))
+ncomp = 2 
+splsda.tune = tune.splsda(otu_tss, Y, 
+                          ncomp = 2, # (ncomp + 1)
+                          test.keepX = list.keepX,
+                          multilevel = sample,
+                          logratio = 'CLR',
+                          validation = 'Mfold',
+                          folds = 5, dist = "centroids.dist", nrepeat = 50) #recomended between 50-100
+# may show some convergence issues for some of the cases, it is ok for tuning
+# mean error rate across all CV folds and nrepeats
+head(splsda.tune$error.rate)
+
+# optimal keepX achieving lowest error rate
+head(splsda.tune$choice.keepX)
+#Show classification rate changes with different numbers of feature in each component
+plot(splsda.tune, optimal = TRUE, sd = TRUE)
+
+
+select.keepX = splsda.tune$choice.keepX #from tuning set above
+select.ncomp = length(select.keepX)
+
+res.splsda = splsda(X = otu_tss,
+                    Y = Y,
+                    multilevel = sample,
+                    ncomp = 2,
+                    keepX = select.keepX,
+                    logratio= "CLR")
+
+plotIndiv(res.splsda,
+          comp =c(1,2),
+          ind.names = FALSE, 
+          col.per.group = color.mixo(1:2), # the number of groups 
+          pch = 16, 
+          ellipse = TRUE,
+          legend = TRUE,
+          title = 'Sinus, sPLSDA comp 1 - 2')
+
+#Evaluating sPLS-DA
+set.seed(34) 
+
+splsda.perf = perf(res.splsda, validation = 'loo', folds = 5, 
+                   progressBar = FALSE, nrepeat = 1)
+
+
+head(splsda.perf$error.rate.class)
+plot(splsda.perf)
+head(selectVar(res.splsda, comp = 1)$value)
+#Contribution plots
+plotLoadings(res.splsda, comp = 1, method = 'mean', contrib = 'max')
+plotLoadings(res.splsda, comp = 2, method = 'mean', contrib = 'max')
+cim(res.splsda, comp = 1, row.sideColors = color.mixo(Y))
+
+
+#Tune the parameters for PCA
+tune<-tune.pca(otu_tss, ncomp=40, center=TRUE, scale=TRUE)
+tune$cum.var
+
+
+
+
+#Based on results, keeping the first 25 components which explain 51.7% of the variance.
+pca_sinus <- pca(otu_tss, ncomp = 40, center = TRUE, scale = TRUE)
+plot(pca_sinus)
+plotIndiv(pca_sinus, comp=c(3,4), group=sinus2017_fil2_data$Type, legend=TRUE)
+#Now for sparce PCA (sPCA)
+spca.sinus <- spca(otu_tss, ncomp = 3, center = TRUE, scale = TRUE, 
+                    keepX = c(200,200,200))
+spca.sinus
+selectVar(spca.sinus, comp = 1)
+plotIndiv(spca.sinus, comp=c(1,2), group=sinus2017_fil2_data$Type, legend=TRUE)
+#Now try multilevel sPLS-DA to account for repeated sampling
+design <- sinus2017_fil2_data$Patient
+sinus_splsda_multilevel <- splsda(otu_tss, 
+                                  Y = sinus2017_fil2_data$Disease_Status, 
+                                  multilevel = design, 
+                                  ncomp = 3, 
+                                  keepX = c(30, 30, 100))
+
+plotIndiv(sinus_splsda_multilevel, comp = c(1,2),
+          ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE,
+          title = 'Sinus, sPLSDA comp 1 - 2')
+
+```
+Exporting data for Network analysis
+```{r, exporting data for network analysis}
+#Decided to use the same OTU table I used for other analyses - rarefied to 6000 seqs, then removed OTUs with less than 5 counts and present in less than 10% of samples.
+otu_table_export<-data.frame(otu_table(sinus2017_rare_fil2), check.names=FALSE)
+otu_table_export<-otu_table_export[,order(colnames(otu_table_export))]
+write.csv(otu_Table_export, file="sinus2017_rare_fil2_otu_table.csv")
+meta_sinus2017_export<-data.frame(sample_data(sinus2017_rare_fil2)[order(rownames(sample_data(sinus2017_rare_fil2))),])
+meta_sinus2017_export<-t(meta_sinus2017_export)
+#add alpha diversity data to table
+alpha_sinus2017_rare_fil2<-estimate_richness(sinus2017_rare_fil2, measures="Shannon")
+alpha_sinus2017_rare_fil2<-t(alpha_sinus2017_rare_fil2[order(rownames(alpha_sinus2017_rare_fil2)),,drop=FALSE])
+meta_sinus2017_export<-rbind(alpha_sinus2017_rare_fil2,meta_sinus2017_export)
+write.csv(meta_sinus2017_export, file="sinus2017_rare_fil2_sampledata.csv")
+write.csv(tax_table(sinus2017_rare_fil2), file="sinus2017_rare_fil2_tax_table.csv")
+```
+Checking out some results from network analysis by Ric Carney
+```{r}
+#OTU 569952 is coming up as interesting, I will plot it.
+OTU569952<-otu_smelt %>% filter(OTU == "569952" & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(OTU569952, aes(x=Patient, y=rel_abund, fill=Disease_Status))+geom_boxplot()+
+  facet_grid(~Disease_Status, scales="free")
+#Several Enterobacteriaceae are positivly correlated with disease
+OTU797229<-otu_smelt %>% filter(OTU == "797229" & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(OTU797229, aes(x=Patient, y=rel_abund, fill=Disease_Status))+geom_boxplot()+
+  facet_grid(~Disease_Status, scales="free")+labs(title="Enterobacteriaceae_20")
+
+#OTU 1075821 is an Alloiococcus - strongest negative correlation, with disease
+OTU1075821<-otu_smelt %>% filter(OTU == "1075821" & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(OTU1075821, aes(x=Patient, y=rel_abund, fill=Disease_Status))+geom_boxplot()+
+  facet_grid(~Disease_Status, scales="free")+labs(title="Alloiococcus_4")
+#Another one 1033167
+OTU1033167<-otu_smelt %>% filter(OTU == "1033167" & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(OTU1033167, aes(x=Patient, y=rel_abund, fill=Disease_Status))+geom_boxplot()+
+  facet_grid(~Disease_Status, scales="free")+labs(title="Alloiococcus_1")
+Alloiococcus1_4<-otu_smelt %>% filter(OTU %in% c("1033167","1075821") & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(Alloiococcus1_4, aes(x=Patient, y=rel_abund, fill=Disease_Status))+
+  geom_boxplot()+facet_grid(~Disease_Status, scales="free")+
+  labs(title="Alloiococcus_1&4")
+#Corynebcaterium
+OTU1069816<-otu_smelt %>% filter(OTU == "1069816" & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(OTU1069816, aes(x=Patient, y=rel_abund, fill=Disease_Status))+
+  geom_boxplot()+facet_grid(~Disease_Status, scales="free")+
+  labs(title="Corynebacterium_20")
+OTU1048678<-otu_smelt %>% filter(OTU == "1048678" & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(OTU1048678, aes(x=Patient, y=rel_abund, fill=Disease_Status))+
+  geom_boxplot()+facet_grid(~Disease_Status, scales="free")+
+  labs(title="Corynebacterium_21")
+#Staphylococcus 6
+OTU1073436<-otu_smelt %>% filter(OTU == "1073436" & Disease_Status %in% c("CRS","CONTROL")) %>% mutate(rel_abund=Abundance/6000*100)
+ggplot(OTU1073436, aes(x=Patient, y=rel_abund, fill=Disease_Status))+
+  geom_boxplot()+facet_grid(~Disease_Status, scales="free")+
+  labs(title="Staphylococcus 6")
+
+```
+
