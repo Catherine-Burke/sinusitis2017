@@ -139,7 +139,6 @@ observed<-dcast(observed, sseqid~queryseqid) %>%
   mutate(mock1=(mock1/sum(mock1))*100, mock2=(mock2/sum(mock2))*100) %>%
   melt()
 
-
 #make extra rows to add to bottom of dataframe
 sseqid<-observed$sseqid[1:8]
 variable<-rep("expected",8)
@@ -191,9 +190,6 @@ mock_blast %>% group_by(sseqid) %>%
   count(pident>=99)
 
 ```
-
-
-
 ##Alpha diversity
 ```{r}
 sample_data(sinus2017_rare)$Patient<-as.factor(sample_data(sinus2017_rare)$Patient)
@@ -223,6 +219,13 @@ sinus_nostMM<-subset_samples(sinus2017_rare, Sinus %in% c("NOST", "MM"))
 plot_richness(sinus_nostMM, x="Disease_Status", measures=c("Observed", "Chao1","Shannon")) +geom_boxplot(aes(fill=Disease_Status))+xlab("Disease Status")+ylab("Diversity")  +ggtitle("Alpha Diversity of nostril and MM According to Disease Status")
 
 plot_richness(sinus2017_rare, x="Patient", measures="Chao1") + facet_grid(~Disease_Status, scales="free")
+
+#Now MM only
+MM_only<- subset_samples(sinus2017_rare, Sinus=="MM")
+plot_richness(MM_only, x="Disease_Status", measures=c("Observed","Chao1","Shannon"))+
+  geom_boxplot(aes(fill=Disease_Status))+
+  xlab("Disease Status")+ylab("Diversity")+ggtitle("Alpha Diversity of MM According to Disease Status")
+
 ```
 ###ANOVA Tests on Alpha diversity
 ```{r}
@@ -230,11 +233,11 @@ plot_richness(sinus2017_rare, x="Patient", measures="Chao1") + facet_grid(~Disea
 #sinus_rare was a phyloseq object - use your filtered rarefied phyloseq object for testing
 ##Convert alpha diversity estimates to a data form we can use for statistical testing
 
-sinus_alpha<-as.matrix(estimate_richness(sinus2017_rare,measures=c("Observed","Chao1","Shannon")))
+sinus_alpha<-data.frame(estimate_richness(sinus2017_rare,measures=c("Observed","Chao1","Shannon")))
 sinus_alpha<-cbind(sinus_alpha,sample_data(sinus2017_rare))
 sinus_nostMM<-subset(sinus_alpha, Sinus %in% c("NOST", "MM"))
-sinus_alpha<- subset(sinus_alpha, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
-
+sinus_alpha_sinus<- subset(sinus_alpha, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
+alpha_MM<-subset(sinus_alpha, Sinus=="MM")
 #Try using nested one-way anova to test for difference between CRS and controls
 library(lme4)
 library(lmerTest)
@@ -252,6 +255,14 @@ anova(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_nostMM))
 rand(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_nostMM))
 anova(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_nostMM))
 rand(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_nostMM))
+#now just with MM samples
+anova(lmer(Shannon ~ Disease_Status + (1|Patient), data=alpha_MM))
+rand(lmer(Shannon ~ Disease_Status + (1|Patient), data=alpha_MM))
+anova(lmer(Observed ~ Disease_Status + (1|Patient), data=alpha_MM))
+rand(lmer(Observed ~ Disease_Status + (1|Patient), data=alpha_MM))
+anova(lmer(Chao1 ~ Disease_Status + (1|Patient), data=alpha_MM))
+rand(lmer(Chao1 ~ Disease_Status + (1|Patient), data=alpha_MM))
+
 #repeat but just within CRS patients, NP Status.
 #will need to remove MM and NOST
 sinus_alpha_CRS <- subset(sinus_alpha, Disease_Status == "CRS")
@@ -368,6 +379,8 @@ Top15_rare
 Top10OTUS_rare <- names(sort(taxa_sums(sinus2017), TRUE)[1:10])
 Top10_rare <- prune_taxa(Top10OTUS_rare, sinus2017)
 plot_bar(Top15_rare,x="Family", fill="Patient")
+#define a contrasting colour palette
+mycol<-palette(c("#e6194b","#3cb44b","#ffe119","#0082c8","#f58231","#911eb4","#46f0f0","#f032e6","#d2f53c","#fabebe","#008080","#e6beff","#aa6e28","#fffac8","#800000","#aaffc3","#808000","#ffd8b1","#000080","#808080","#FFFFFF","#000000"))
 
 #Better way
 otu_smelt<-psmelt(sinus2017_rare)
@@ -378,10 +391,12 @@ sinus_plots<-otu_smelt %>%
 phyla_plot<-sinus_plots %>% 
   group_by(Patient,OTU) %>%
   mutate(av_rel_abund=mean(rel_abund))%>%
-  distinct(Patient,OTU, .keep_all=TRUE)
+  distinct(Patient,OTU, .keep_all=TRUE)%>%
+  filter(av_rel_abund>0.1)
   
-ggplot(phyla_plot, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
-  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in sinuses only")
+fig1a<-ggplot(phyla_plot, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in sinuses only")+scale_fill_manual(values=c("p__[Thermi]"="#e6194b","p__Actinobacteria"="#3cb44b","p__Bacteroidetes"="#ffe119","p__Chloroflexi"="#0082c8","p__Cyanobacteria"="#f58231","p__Firmicutes"="#911eb4","p__Fusobacteria"="#46f0f0","p__Proteobacteria"="#f032e6","p__Synergistetes"="#d2f53c","p__TM7"="#fabebe"))
+
 
 #Check out nostrils
 nost_mm_plot<-otu_smelt %>%
@@ -390,9 +405,21 @@ nost_mm_plot<-otu_smelt %>%
 nost_mm_phyla<-nost_mm_plot %>% 
   group_by(Patient,OTU) %>%
   mutate(av_rel_abund=mean(rel_abund))%>%
-  distinct(Patient,OTU, .keep_all=TRUE)
+  distinct(Patient,OTU, .keep_all=TRUE) %>%
+  filter(av_rel_abund>0.1) %>%
+  filter(Phylum!="NA")
 ggplot(nost_mm_phyla, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
-  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in nostril and MM only")
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in nostril and MM only")+scale_fill_manual(values=c("p__[Thermi]"="#e6194b","p__Actinobacteria"="#3cb44b","p__Bacteroidetes"="#ffe119","p__Chloroflexi"="#0082c8","p__Cyanobacteria"="#f58231","p__Firmicutes"="#911eb4","p__Fusobacteria"="#46f0f0","p__Proteobacteria"="#f032e6","p__Synergistetes"="#d2f53c","p__TM7"="#fabebe"))
+#Check out MM
+mm_phyla <- nost_mm_plot %>% filter(Sinus=="MM") %>% 
+  group_by(Patient,OTU) %>%
+  mutate(av_rel_abund=mean(rel_abund))%>%
+  distinct(Patient,OTU, .keep_all=TRUE) %>%
+  filter(av_rel_abund>0.1) %>%
+  filter(Phylum!="NA")
+  
+ggplot(mm_phyla, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in MM only")+scale_fill_manual(values=c("p__[Thermi]"="#e6194b","p__Actinobacteria"="#3cb44b","p__Bacteroidetes"="#ffe119","p__Chloroflexi"="#0082c8","p__Cyanobacteria"="#f58231","p__Firmicutes"="#911eb4","p__Fusobacteria"="#46f0f0","p__Proteobacteria"="#f032e6","p__Synergistetes"="#d2f53c","p__TM7"="#fabebe"))
 
 #Look at genera level
 genus_plots<-sinus_plots %>% group_by(Disease_Status,Patient,Sinus,Sample,Family,Genus)%>%
