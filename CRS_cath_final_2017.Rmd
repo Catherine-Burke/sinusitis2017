@@ -19,7 +19,6 @@ library("tidyverse")
 #library("SpiecEasi")
 #library("igraph")
 #library("mixOmics")
-
 ```
 ```{r, import data, echo=FALSE}
 biom<-("data/OTU_aligned_non_chim_tax_json.biom")
@@ -33,7 +32,7 @@ sinus2017
 colnames(tax_table(sinus2017)) = c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
 ```
 
-## Alpha Diversity Analysis
+## Rarefaction analysis
 
 ```{r; alpha diversity}
 ##Need the unfiltered OTU table for this...
@@ -53,6 +52,150 @@ for (i in seq_along(curve)) {
 }
 #For alpha diversity - rarefy to 6000 seqs per sample
 sinus2017_rare<-rarefy_even_depth(sinus2017, sample.size=6000, rngseed=711, replace=FALSE, trimOTUs=TRUE)
+```
+#Examine negatives
+```{r, examine negatives}
+negs<-subset_samples(sinus2017, Control_type %in% c("pcrneg","proneg"))
+negs<-filter_taxa(negs, function(x) sum(x)>1, TRUE)
+#Plot summary
+plot_bar(negs, fill="Family")
+#Filter PCR negative 2, we know this gave a strong band in PCR, but those PCRs were not included in sequencing
+negs2<-prune_samples(c("PCRnegative","Processnegative","Processnegative2"), negs)
+negs2_smelt<- psmelt(negs2)
+neg_gen<-negs2_smelt %>% filter(Abundance>2) %>% group_by(Run_Prefix,Genus) %>% summarise(sum_abund=sum(Abundance)) %>% filter(sum_abund>5) %>% arrange(desc(sum_abund))
+
+negs2<-filter_taxa(negs2, function(x) sum(x)>5, TRUE)
+p2<-plot_bar(negs2, fill="Family")
+p2+geom_bar(aes(color=Family, fill=Family), stat="identity", position="stack"))
+```
+
+#Evaluation of mock community
+```{r}
+#Filter out rare OTUs
+sinus_rare_rel<-transform_sample_counts(sinus2017_rare, function(x) x/sum(x))
+sinus_rare_rel_fil<-filter_taxa(sinus_rare_rel, function(x) mean(x) > 1e-5, TRUE)
+#Lock at OTUs from mock samples 
+mock_otu<-otu_table(sinus_rare_rel_fil)[,c("HMP2","HMP")]
+mock_otu_tb<-as.data.frame(mock_otu) %>% rownames_to_column(var="OTU") %>%
+  filter(HMP>0 & HMP2>0)
+mock_tax<-as.data.frame(tax_table(sinus_rare_rel_fil)[mock_otu_tb$OTU,])
+mock_otu_tb<-cbind(mock_otu_tb,mock_tax)
+mock_otu_summary<-mock_otu_tb %>% arrange(desc(HMP)) %>% select(1:3,8:10) %>%
+  group_by(Family) %>% summarise_at(c("HMP","HMP2"), sum)
+expected_mock <- c(0.157, 0.213, 0.104, 0.188, 0.159, 0.046, 0.133)
+mock_otu_summary<-cbind(mock_otu_summary,expected_mock)
+  melt(mock_otu_summary) %>%
+  ggplot(aes(x=Family,y=value, fill=variable))+geom_bar(stat="identity", position="dodge")+ggtitle("Mock Community Taxonomic Distribution")+scale_x_discrete(labels=c("HMP"="Run1","HMP2"="Run2","expected_mock"="Expected"))
+#Now plot at OTU level
+mock<-prune_samples(c("HMP","HMP2"),sinus_rare_rel)
+mock<-filter_taxa(mock, function(x) mean(x) > 1e-3, TRUE)
+p<-plot_bar(mock, fill="Genus")
+p + geom_bar(aes(color=Genus, fill=Genus), stat="identity", position="stack")  
+
+#Look at blast results of mock seqs against reference seqs.  
+mock_blast<-read.delim(file="data/mock_seqs_full_blast.txt", header=TRUE, sep="\t")
+
+mock_blast %>% count(sseqid, pident) %>% 
+  arrange(desc(pident))%>% arrange(sseqid) %>% spread(pident,n) %>%
+  dplyr::summarise(n_distinct(pident))
+#Summarise the number of hits with a distinct percent identity for each taxa in the mock community
+mock_summary<-mock_blast %>% group_by(sseqid, pident) %>%
+  arrange(sseqid, desc(pident)) %>%
+  summarise(n=n()) %>%
+  arrange(sseqid, desc(pident))
+sum(mock_summary$freq)
+sum(mock_summary$n)/nrow(mock_blast)
+
+mock_98<-mock_blast %>% 
+  filter(pident>=98.000) %>%
+  arrange(sseqid,desc(pident)) %>%
+  mutate(freq=1/nrow(mock_blast))
+
+mock_97<-mock_blast %>% 
+  filter(pident>=97.000) %>%
+  arrange(sseqid,desc(pident))
+  
+  mutate(freq=1/nrow(mock_blast))
+
+#Seperate out mock1 and mock2 results
+mock_97_test <- mock_97
+mock_97_test$queryseqid<-sub("HMP_[0-9]+","mock1", mock_97$queryseqid)
+mock_97_test$queryseqid<-sub("HMP2_[0-9]+","mock2", mock_97_test$queryseqid)
+mock_97_test$sseqid<-sub("_2","", mock_97_test$sseqid)
+mock_97_test$queryseqid<-as.factor(mock_97_test$queryseqid)
+
+#Calculate proportion of seqs with < 97% identity to reference
+less_97<-mock_blast %>%
+  filter(pident<97) %>%
+  nrow()/nrow(mock_blast)
+less_99<- mock_blast %>%
+  filter(pident<99) %>%
+  nrow()/nrow(mock_blast)
+#Calculate observed vs expected frequency of taxa for hits > 97% identity to a reference.
+observed<- mock_97_test %>% group_by(queryseqid,sseqid) %>%
+  mutate(count=1)%>%
+  summarise(counts=sum(count))
+observed<-dcast(observed, sseqid~queryseqid) %>%
+  mutate(mock1=(mock1/sum(mock1))*100, mock2=(mock2/sum(mock2))*100) %>%
+  melt()
+
+
+#make extra rows to add to bottom of dataframe
+sseqid<-observed$sseqid[1:8]
+variable<-rep("expected",8)
+value<-c(15.7, 10.4, 10.0, 18.8, 15.9, 04.6, 11.3, 13.3)
+expected <- data.frame(sseqid,variable,value)
+#Need to change to same type as observed
+observed<-as.data.frame(observed)
+observed_expected<-rbind(observed,expected)
+
+#plot
+ggplot(observed_expected, aes(x=sseqid, y=value, fill=variable))+ geom_bar(stat="identity",position="dodge") + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Observed Vs Expected Sequence Frequency in the Mock Community") + ylab("Frequency")+xlab("Taxa")+theme(legend.title=element_blank())
+#calculate fold change
+
+fold_change<-observed_expected$value/expected$value
+observed_expected<-cbind(observed_expected,fold_change)
+observed_expected<-mutate(observed_expected, log2fc=log2(fold_change))
+observed_expected$sseqid<-gsub("_16S","",observed_expected$sseqid)
+observed_expected$sseqid<-gsub("_"," ",observed_expected$sseqid)
+#Now plot as fold change
+figureS1<-observed_expected %>% filter (variable!="expected")%>%
+  ggplot(aes(x=sseqid, y=log2fc, fill=variable))+ geom_bar(stat="identity",position="dodge") + theme(axis.text.x = element_text(angle = 90, face= "italic")) + ggtitle("Fold-change of observed against expected frequency of taxa in mock community\nfrom two sequencing runs")+scale_y_continuous(limits=c(-1,1))+ labs(x="Mock community species", y="log2 fold change")+ scale_fill_discrete(name="Run",breaks=c("mock1", "mock2"),labels=c("1", "2"))+ylim(-0.5,0.5)
+
+dif<-observed_expected %>% filter(variable!="expected") %>% group_by(sseqid) %>%
+  summarise(sd=sd(log2fc), mean=mean(log2fc), diff=log2fc-log2fc)
+
+prop_greater_98<-(nrow(mock_98))/(nrow(mock_blast))
+mock_plot<- mock_blast %>%
+ mutate( freq=1/nrow(mock_blast)) %>%  arrange(sseqid, desc(pident))%>%
+  filter(pident>=99.5000)
+
+mock_less_98<-mock_blast %>%
+  filter(pident<98.000)
+(nrow(mock_less_98))/(nrow(mock_blast))
+  
+  #Plot histogram
+ggplot(data=mock_blast, aes(x=pident, fill=sseqid)) + geom_histogram(aes(y=..density..))
+  
+ggplot(data=mock_summary, aes(x=sseqid, y=freq)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Frequency of hits to reference 16S genes")
+
+ggplot(data=mock_98, aes(x=sseqid, y=freq)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Frequency of hits >98% to reference 16S genes")
+
+ggplot(data=mock_97, aes(x=sseqid, y=freq)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Frequency of hits >97% to reference 16S genes")
+
+unique(mock_summary$sseqid)
+
+hist_data<-hist(mock_blast$pident, breaks=28, freq=FALSE)
+  
+mock_blast %>% group_by(sseqid) %>%
+  count(pident>=99)
+
+```
+
+
+
+##Alpha diversity
+```{r}
 sample_data(sinus2017_rare)$Patient<-as.factor(sample_data(sinus2017_rare)$Patient)
 #remove NOST and MM samples as they actually look quite different in alpha diversity
 Sinus_only <- subset_samples(sinus2017_rare, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
@@ -363,6 +506,12 @@ sinus2017_rare_wuf<-distance(sinus2017_rare_fil2,method="wunifrac", type="sample
 Sinus_only_fil<-subset_samples(sinus2017_rare_fil2, Sinus %in% c("ETH","MAX","FRO","SPH"))
 Sinus_only_fil_CRS<-subset_samples(sinus2017_rare_fil2, Disease_Status =="CRS")
 Sinus_only_fil_control<-subset_samples(sinus2017_rare_fil2, Disease_Status =="CONTROL")
+
+#Get sum of reads for different families in the Enterobacteriaceae
+sum_proteo_fam<-as.data.frame(otu_smelt %>% filter(Phylum=="p__Proteobacteria") %>% distinct (OTU, .keep_all=TRUE) %>% group_by(Family) %>% summarise(sum(Abundance)))
+sum((sum_proteo_fam)[,2])
+#Enteros account for 29651 of 72000 seqs for proteos - or 41.2%
+
 #Now calculate weighted unifrac distances
 #weighted unifrac of all samples
 #use for between CRS and Control tests
@@ -865,6 +1014,8 @@ OTU1073436<-otu_smelt %>% filter(OTU == "1073436" & Disease_Status %in% c("CRS",
 ggplot(OTU1073436, aes(x=Patient, y=rel_abund, fill=Disease_Status))+
   geom_boxplot()+facet_grid(~Disease_Status, scales="free")+
   labs(title="Staphylococcus 6")
-
+#Get a list of Alloiococus OTUs
+Alloiococcus<-otu_smelt %>% filter(Genus=="g__Alloiococcus" & Abundance >= 10) %>%
+  distinct(OTU, .keep_all=TRUE)
 ```
 
