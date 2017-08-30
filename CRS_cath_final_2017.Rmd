@@ -572,7 +572,9 @@ ord_sinus_wuf<-ordinate(Sinus_only_fil, method="PCoA", distance=sinus_wuf)
 sample_data(Sinus_only_fil)$Patient<-as.factor(sample_data(Sinus_only_fil)$Patient)
 plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="Disease_Status") + stat_ellipse()+labs(title="PCoA of sinus samples")
 sample_data(Sinus_only_fil)$run_no<-as.factor(sample_data(Sinus_only_fil)$run_no)
-
+#Test for differences in dispersion
+bd<-betadisper(sinus_wuf,(sample_data(Sinus_only_fil))$Disease_Status)
+permutest(bd)
 #subset to sphenoid only and repeat
 sphenoid_only_fil<-subset_samples(Sinus_only_fil, Sinus=="SPH")
 sph_wuf<-phyloseq::distance(sphenoid_only_fil, method="wunifrac", type="samples")
@@ -580,7 +582,8 @@ sph_ord<-ordinate(sphenoid_only_fil, method="PCoA", distance=sph_wuf)
 plot_ordination(sphenoid_only_fil, sph_ord, color="Disease_Status") +
   stat_ellipse() + labs(title="PCoA of spheonid sinus samples")
 
-
+bds<-betadisper(sinus_wuf,(sample_data(Sinus_only_fil))$Disease_Status)
+permutest(bds)
 
 plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="run_no", shape="Disease_Status")
 #plot_ordination(rare_sinus2017_filter_cont_rem, ord_sinus_wuf,color="PCR_no", shape="Disease_Status")
