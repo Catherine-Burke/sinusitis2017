@@ -380,7 +380,7 @@ Top10OTUS_rare <- names(sort(taxa_sums(sinus2017), TRUE)[1:10])
 Top10_rare <- prune_taxa(Top10OTUS_rare, sinus2017)
 plot_bar(Top15_rare,x="Family", fill="Patient")
 #define a contrasting colour palette
-mycol<-palette(c("#e6194b","#3cb44b","#ffe119","#0082c8","#f58231","#911eb4","#46f0f0","#f032e6","#d2f53c","#fabebe","#008080","#e6beff","#aa6e28","#fffac8","#800000","#aaffc3","#808000","#ffd8b1","#000080","#808080","#FFFFFF","#000000"))
+mycol<-palette(c("#e6194b","#3cb44b","#ffe119","#0082c8","#f58231","#911eb4","#46f0f0","#f032e6","#d2f53c","#fabebe","#008080","#e6beff","#aa6e28","#fffac8","#800000","#aaffc3","#808000","#ffd8b1","#000080","#808080","#FFFFFF","#000000","plum1","dodgerblue","chartreuse","magenta","darkred","paleturquoise"))
 
 #Better way
 otu_smelt<-psmelt(sinus2017_rare)
@@ -422,15 +422,18 @@ ggplot(mm_phyla, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="i
   guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average phyla per patient in MM only")+scale_fill_manual(values=c("p__[Thermi]"="#e6194b","p__Actinobacteria"="#3cb44b","p__Bacteroidetes"="#ffe119","p__Chloroflexi"="#0082c8","p__Cyanobacteria"="#f58231","p__Firmicutes"="#911eb4","p__Fusobacteria"="#46f0f0","p__Proteobacteria"="#f032e6","p__Synergistetes"="#d2f53c","p__TM7"="#fabebe"))
 
 #Look at genera level
-genus_plots<-sinus_plots %>% group_by(Disease_Status,Patient,Sinus,Sample,Family,Genus)%>%
-  summarise(sum_abund=sum(rel_abund)) %>%
+genus_plots<-sinus_plots %>% group_by(Sample,Genus)%>%
+  mutate(sum_abund=sum(rel_abund)) %>%
   group_by(Patient,Genus)%>%
   mutate(av_abund=mean(sum_abund))%>%
   distinct(Patient, Genus, .keep_all=TRUE)%>%
-  filter(av_abund>1)
+  filter(av_abund>1.5) %>%
+  filter(Genus!="NA")
+
 genus_plots$Sample<-as.factor(genus_plots$Sample)  
+
 ggplot(genus_plots,aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
-  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average Genus abundance per patient in sinuses only")
+  guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average Genus abundance per patient in sinuses only")+scale_fill_manual(values=mycol)
 
 
 
@@ -443,7 +446,20 @@ genus_plot_sig_sinus<-sinus_plots %>%
   distinct(Patient, Genus, .keep_all=TRUE)%>%
   filter(Genus %in% c("g__","g__Corynebacterium","g__Alloiococcus","g__Staphylococcus"))
   
-  
+sig_sinus_genus<- sinus_plots %>% 
+  filter(Genus %in% c("g__Corynebacterium","g__Alloiococcus","g__Staphylococcus") | Family=="f__Enterobacteriaceae"&Genus=="g__") %>%
+  mutate(rel_abund=Abundance/6000*100) %>%
+  group_by(Genus,Sample)%>%
+  mutate(sum_abund=sum(rel_abund))
+
+ggplot(sig_sinus_genus, aes(x=Patient,y=sum_abund, fill=Disease_Status))+
+  geom_boxplot() +
+  facet_grid(Family~Disease_Status, scales="free")+labs(y="Relative Abundance (%)", title="Abundance of Significantly Different Genera in CRS and Controls") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+sig_sinus_genus %>% filter(Genus=="g__Corynebacterium") %>%
+  ggplot(aes(x=Patient,y=sum_abund,fill=Disease_Status))+geom_boxplot() + 
+  facet_grid(.~Disease_Status, scales="free")
   
   group_by(Patient,OTU) %>%
   mutate(av_rel_abund=mean(rel_abund))%>%
@@ -527,7 +543,7 @@ sinus2017_rare
 #Remove rare OTUs not seen more than 5 times, and present in at least 10% of samples
 sinus2017_rare_fil1<-filter_taxa(sinus2017_rare, function(x) sum(x)>5 & sum(x>0)>0.1*length(x),TRUE)
 sinus2017_rare_fil2 <- subset_samples(sinus2017_rare_fil1, Disease_Status %in% c("CONTROL","CRS"))
-sinus2017_rare_wuf<-distance(sinus2017_rare_fil2,method="wunifrac", type="samples")
+sinus2017_rare_wuf<-phyloseq::distance(sinus2017_rare_fil2, method="wunifrac", type="samples")
 
 #Now MM and NOST samples will affect
 Sinus_only_fil<-subset_samples(sinus2017_rare_fil2, Sinus %in% c("ETH","MAX","FRO","SPH"))
@@ -543,7 +559,7 @@ sum((sum_proteo_fam)[,2])
 #weighted unifrac of all samples
 #use for between CRS and Control tests
 #weighed unifrac for all
-sinus_wuf<-distance(Sinus_only_fil, method="wunifrac", type="samples")
+sinus_wuf<-phyloseq::distance(Sinus_only_fil, method="wunifrac", type="samples")
 #Then ordinate and plot - note that you can calculate the distances within 
 #the ordinate command by including the distance type, or you can call previously 
 #calculated distances, e.g. sinus_wuf above
@@ -553,9 +569,20 @@ ord_sinus_wuf<-ordinate(Sinus_only_fil, method="PCoA", distance=sinus_wuf)
 
 
 #plotting disease status and NP/run_no/PCR_no
-plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="Patient", shape="Disease_Status")
+sample_data(Sinus_only_fil)$Patient<-as.factor(sample_data(Sinus_only_fil)$Patient)
+plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="Disease_Status") + stat_ellipse()+labs(title="PCoA of sinus samples")
 sample_data(Sinus_only_fil)$run_no<-as.factor(sample_data(Sinus_only_fil)$run_no)
-plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="Disease_Status", shape="run_no")
+
+#subset to sphenoid only and repeat
+sphenoid_only_fil<-subset_samples(Sinus_only_fil, Sinus=="SPH")
+sph_wuf<-phyloseq::distance(sphenoid_only_fil, method="wunifrac", type="samples")
+sph_ord<-ordinate(sphenoid_only_fil, method="PCoA", distance=sph_wuf)
+plot_ordination(sphenoid_only_fil, sph_ord, color="Disease_Status") +
+  stat_ellipse() + labs(title="PCoA of spheonid sinus samples")
+
+
+
+plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="run_no", shape="Disease_Status")
 #plot_ordination(rare_sinus2017_filter_cont_rem, ord_sinus_wuf,color="PCR_no", shape="Disease_Status")
 
 NP_PCoA <-  plot_ordination(Sinus_only_fil, ord_sinus_wuf, color="NP_Status", shape="Disease_Status")
@@ -578,7 +605,7 @@ nost_mm_fil<-subset_samples(sinus2017_rare_fil2, Sinus %in% c("NOST","MM"))
 nost_wuf<-distance(nost_mm_fil, method="wunifrac", type="samples")
 ord_nost_wuf<-ordinate(nost_mm_fil, method="PCoA", distance=nost_wuf)
 #plotting disease status and NP/run_no/PCR_no
-plot_ordination(nost_mm_fil, ord_nost_wuf,color="Disease_Status", label="Patient")+ggtitle("Weighted unifrac PCoA from nost and MM swabs")
+plot_ordination(nost_mm_fil, ord_nost_wuf,color="Disease_Status")+ggtitle("Weighted unifrac PCoA from nost and MM swabs") + stat_ellipse()
 
 #Boxplots of intrapatient differences
 patient_distances <- read.csv("data/intra_patient_dist_wu.csv", header=TRUE, check.names = FALSE)
