@@ -16,6 +16,8 @@ library("ggplot2")
 library("vegan")
 library("reshape2")
 library("tidyverse")
+library("lme4")
+library("lmerTest")
 #library("SpiecEasi")
 #library("igraph")
 #library("mixOmics")
@@ -573,14 +575,18 @@ sample_data(Sinus_only_fil)$Patient<-as.factor(sample_data(Sinus_only_fil)$Patie
 plot_ordination(Sinus_only_fil, ord_sinus_wuf,color="Disease_Status") + stat_ellipse()+labs(title="PCoA of sinus samples")
 sample_data(Sinus_only_fil)$run_no<-as.factor(sample_data(Sinus_only_fil)$run_no)
 #Test for differences in dispersion
-bd<-betadisper(sinus_wuf,(sample_data(Sinus_only_fil))$Disease_Status)
+bd<-betadisper(sinus_wuf,(sample_data(Sinus_only_fil))$Disease_Status, type="centroid")
 permutest(bd)
+adonis(sinus_wuf~Disease_Status/Patient + Patient + Sinus + run_no, data=data.frame(sample_data(Sinus_only_fil)))
+
 #subset to sphenoid only and repeat
 sphenoid_only_fil<-subset_samples(Sinus_only_fil, Sinus=="SPH")
 sph_wuf<-phyloseq::distance(sphenoid_only_fil, method="wunifrac", type="samples")
 sph_ord<-ordinate(sphenoid_only_fil, method="PCoA", distance=sph_wuf)
 plot_ordination(sphenoid_only_fil, sph_ord, color="Disease_Status") +
   stat_ellipse() + labs(title="PCoA of spheonid sinus samples")
+
+adonis(sph_wuf~Disease_Status/Patient + Patient + run_no, data=data.frame(sample_data(sphenoid_only_fil)))
 
 bds<-betadisper(sinus_wuf,(sample_data(Sinus_only_fil))$Disease_Status)
 permutest(bds)
@@ -618,10 +624,13 @@ status<-sample_data(sinus2017_rare_fil2)[,c("Patient","Disease_Status")] %>% dis
 patient_distances<-merge(patient_distances,data.frame(status),by="Patient")
 patient_distances$Patient<-as.factor(status$Patient)
 
-ggplot(patient_distances, aes(x=Disease_Status, y=distance, fill=Disease_Status))+geom_boxplot()+ ggtitle("Intra-patient Weighted Unifrac Distances") + xlab("Health Status") +ylab("Unifrac Distance") + theme(plot.title = element_text(hjust = 0.5)) +theme(axis.text=element_text(size=12),                                 axis.title=element_text(size=14)) + theme(plot.title = element_text(size = 16)) 
+distance_boxplot<-ggplot(patient_distances, aes(x=Disease_Status, y=distance, fill=Disease_Status))+geom_boxplot()+ ggtitle("Intra-patient Weighted Unifrac Distances") + xlab("Health Status") +ylab("Unifrac Distance") + theme(plot.title = element_text(hjust = 0.5)) +theme(axis.text=element_text(size=12),                                 axis.title=element_text(size=14)) + theme(plot.title = element_text(size = 16)) 
 
-distance_boxplot <- distance_boxplot + scale_x_discrete(breaks = c("Contol", "CRS"), labels = c("Healthy","CRS")) + xlab(NULL) + theme(legend.position = "bottom", legend.background = element_rect(color = "white", 
-                                                                                                                                                                                                    fill = "white", size = 1, linetype = "solid"), legend.direction = "horizontal")
+distance_boxplot2 <- distance_boxplot + scale_x_discrete(breaks = c("Contol", "CRS"), labels = c("Healthy","CRS")) + xlab(NULL) + theme(legend.position = "bottom", legend.background = element_rect(color = "white", fill = "white", size = 1, linetype = "solid"), legend.direction = "horizontal")
+#Do this with the wunifrac distances matrices from phyloseq, only include sinus samples for comparisons - will do this below the next section and use the dataframe of distances I created.
+
+
+
 ```
 ##Compare MM and NOST to sinuses within patients - are nostril or MM samples representative of the sinus communities?
 ```{r}
@@ -643,8 +652,26 @@ test2_m$D2<-disease_status[match(test2_m$P2, disease_status$Patient),2]
 #Now should be able to subset any way I want with dplyr
 #Try getting all intrapersonal comparisons, for sinuses only, and plotting by disease status.
 test<- test2_m %>% filter(!S1 %in% c("NOST","LMM","RMM") & !S2 %in% c("NOST","LMM","RMM")) %>%
-  filter(P1==P2) 
-ggplot(test, aes(x=D1, y=value))+geom_boxplot()
+  filter(P1==P2) %>% arrange(P1)
+P1<-ggplot(test, aes(x=D1, y=value, fill=D1))+
+  geom_boxplot()+labs(title="Within Patient Wieghted Unifrac Distances", x="Disease Status", y="Weighted unifrac distance")+
+  theme(legend.title=element_blank())
+
+  geom_point(position="jitter")
+show_col(hue_pal()(4))  
+P2<-test %>% filter(D1=="CONTROL") %>% ggplot(aes(x=P1, y=value))+
+  geom_boxplot(fill="#F8766D")+labs(title="Within Control Patient Wieghted Unifrac Distances", y="Weighted unifrac distance", x="Patient")
+P3<-test %>% filter(D2=="CRS") %>% ggplot(aes(x=P1, y=value))+
+  geom_boxplot(fill="#00BFC4")+labs(title="Within CRS Patient Wieghted Unifrac Distances", y="Weighted unifrac distance", x="Patient")
+grid.arrange(P1, arrangeGrob(P2,P3,ncol=1), ncol=2)
+#Check for significance in difference between wunifrac intra patient distances
+anova(lmer(value ~ D1 + (1|P2), data=test))
+anova(lm(value ~ D1 + P2, data=test))
+rand(lmer(value ~ D1 + (1|P2), data=test))
+#Not sure if I need to have patient as a random variable here - I think I do, but this does make it non-significant. What if I average the values per patient, and test for sig dif between average distance within patients in CRS and Controls?
+average_dist<- test %>% group_by(D1,P1) %>% summarise(av_dist=mean(value)) 
+anova(lm(av_dist ~ D1, data=average_dist))
+
 #Now get all nost or MM comparisons to sinuses intrapersonal comparisons, and compare to sinus vs sinus comparisons intrapersonal
 intra2<-test2_m %>% filter(P1==P2) %>%
   mutate(comp=ifelse(S1=="NOST" | S2=="NOST","NvS","SvS"),comp=ifelse(S1 %in% c("LMM","RMM") | S2 %in% c("LMM","RMM"),"MMvS",comp))
@@ -744,14 +771,20 @@ name<-paste(cor_otu_data$OTU[1],corr_otu_data$Genus[1], sep=" ")
 #Plot all otus
 tax_name<-tax_table(sinus2017)[snot_cor,c("Family","Genus")]
 tax_name<-data.frame(tax_name[order(row.names(tax_name)),])
-plot<-ggplot(cor_otu_data,aes(x=rel_abund, y=SNOT22))+geom_point()+
+plot<-ggplot(cor_otu_data,aes(x=rel_abund, y=SNOT22))+geom_point(aes(colour=Patient))+
   geom_smooth(method=lm, fullrange=TRUE)+labs(x="relative abundnace (%)")+ylim(0,100)+facet_wrap(~OTU,7,6)
+
+#Geom text looks bad because it's putting the text on multiple times from the data. Get new data frame with only one entry per family.
+text_otu_data<-cor_otu_data %>% group_by(Family,Genus,OTU) %>% distinct(Genus, .keep_all=TRUE)
   
-plot + geom_text(aes(x=50, y=100,label=paste(Family,Genus)),size=2)
+plot + geom_text(data=text_otu_data, aes(x=50, y=100,label=paste(Family,Genus)),size=2)
 #Plot ind otus
 indplot<-cor_otu_data %>% filter(OTU %in% c("410908","1075821")) %>%
   ggplot(aes(x=rel_abund, y=SNOT22)) + 
-  geom_point(aes(color=Genus))+labs(title="Corynebacterium 410908, SNOT22 vs abundance",x="relative abundance (%)")+ylim(0,100)
+  geom_point(aes(color=Patient))+
+  geom_smooth(method=lm)+
+  labs(title="SNOT22 vs abundance",x="relative abundance (%)")+
+  ylim(0,100)+facet_grid(.~Genus, scales="free")
 
 indplot + facet_wrap(~SNOT22,7,5)
 
@@ -775,12 +808,19 @@ cor_genera<-otu_smelt %>%
   mutate(rel_abund=Abundance/6000*100) %>%
   arrange(OTU) %>% filter(Genus %in% c("g__Streptococcus", "g__Corynebacterium", "g__Haemophilus","g__Bulleidia","g__Micrococcus","g__Actinomyces") | (Family %in% c("f__Enterobacteriaceae","f__Neisseriaceae","f__Rhodobacteraceae") & Genus=="g__"))
 
-genera_sums<-cor_genera %>% group_by(Sample,Family,Genus) %>%
-  summarise(gen_sums=sum(rel_abund),snot22=mean(SNOT22))
+genera_sums<-cor_genera %>% group_by(Patient,Sample,Family,Genus) %>%
+  summarise(gen_sums=sum(rel_abund),snot22=mean(SNOT22)) %>%
+  filter(Patient!="NA")
 
-gen_plot<-ggplot(genera_sums,aes(x=gen_sums, y=snot22))+geom_point()+
+gen_plot<-ggplot(genera_sums,aes(x=gen_sums, y=snot22))+geom_point(aes(colour=Patient))+
   geom_smooth(method=lm, fullrange=TRUE)+labs(x="relative abundance (%)")+ylim(0,100)+facet_wrap(~Family,3,3)
-gen_plot+geom_text(aes(x=50, y=90,label=Genus),size=3)
+
+#Geom text looks bad because it's putting the text on multiple times from the data. Get new data frame with only one entry per family.
+text_data<-genera_sums %>% group_by(Family) %>% distinct(Family, .keep_all = TRUE)
+
+gen_plot+geom_text(data=text_data,aes(x=50, y=90,label=Genus),size=3)
+
+
 
 #Individual Genera
 genera_sums %>% filter(Genus=="g__Corynebacterium") %>%
