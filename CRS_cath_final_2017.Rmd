@@ -382,7 +382,7 @@ Top10OTUS_rare <- names(sort(taxa_sums(sinus2017), TRUE)[1:10])
 Top10_rare <- prune_taxa(Top10OTUS_rare, sinus2017)
 plot_bar(Top15_rare,x="Family", fill="Patient")
 #define a contrasting colour palette
-mycol<-palette(c("#e6194b","#3cb44b","#ffe119","#0082c8","#f58231","#911eb4","#46f0f0","#f032e6","#d2f53c","#fabebe","#008080","#e6beff","#aa6e28","#fffac8","#800000","#aaffc3","#808000","#ffd8b1","#000080","#808080","#FFFFFF","#000000","plum1","dodgerblue","chartreuse","magenta","darkred","paleturquoise"))
+mycol<-palette(c("#e6194b","#3cb44b","#d2f53c","#ffe119","#0082c8","#f58231","#911eb4","#46f0f0","#f032e6","#fabebe","#008080","#e6beff","#aa6e28","#fffac8","#800000","#aaffc3","#808000","#ffd8b1","#000080","#808080","#FFFFFF","#000000","plum1","dodgerblue","chartreuse","paleturquoise","magenta","darkred"))
 
 #Better way
 otu_smelt<-psmelt(sinus2017_rare)
@@ -426,6 +426,7 @@ ggplot(mm_phyla, aes(x=Patient, y=av_rel_abund, fill=Phylum)) + geom_bar(stat="i
 #Look at genera level
 genus_plots<-sinus_plots %>% group_by(Sample,Genus)%>%
   mutate(sum_abund=sum(rel_abund)) %>%
+  distinct(Genus) %>%
   group_by(Patient,Genus)%>%
   mutate(av_abund=mean(sum_abund))%>%
   distinct(Patient, Genus, .keep_all=TRUE)%>%
@@ -437,7 +438,73 @@ genus_plots$Sample<-as.factor(genus_plots$Sample)
 ggplot(genus_plots,aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+facet_grid(.~Disease_Status, scales="free")+
   guides(fill=guide_legend(ncol=1))+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +ggtitle("Average Genus abundance per patient in sinuses only")+scale_fill_manual(values=mycol)
 
+mm_genera <- nost_mm_plot %>% filter(Sinus=="MM") %>% 
+  group_by(Sample,Genus)%>%
+  mutate(sum_abund=sum(rel_abund)) %>%
+  distinct(Genus, .keep_all=TRUE) %>%
+  group_by(Patient,Genus)%>%
+  mutate(av_abund=mean(sum_abund))%>%
+  distinct(Patient, Genus, .keep_all=TRUE)%>%
+  filter(av_abund>1.5) %>%
+  filter(Genus!="NA")
+ggplot(mm_genera, aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+
+  facet_grid(.~Disease_Status, scales="free")+scale_fill_manual(values=mycol)+labs(title="Average Genus abundance per patient in middle meatus samples only", y="Average relative abundance (%)")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.key.size = unit(0.5,"line")) +
+  guides(fill=guide_legend(ncol=1))
 
+
+entero<-otu_smelt %>%
+  mutate(rel_abund=Abundance/6000*100) %>%
+  filter(Family=="f__Enterobacteriaceae") %>% filter(Genus=="g__")
+
+E1<-entero %>% filter(Sinus=="MM") %>%
+  group_by(Patient) %>% mutate(sum_abund=sum(rel_abund)) %>%
+  distinct(Genus, .keep_all=TRUE)%>%
+  mutate(av_abund=mean(sum_abund)) %>%
+  ggplot(aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+
+  facet_grid(.~Disease_Status, scales="free")+scale_fill_manual(values=mycol)+labs(title="Middle meatus samples", y=NULL, x=NULL)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none",plot.title = element_text(size=10))
+
+E2<-entero %>% filter(Sinus!="MM") %>%
+  group_by(Patient) %>% mutate(sum_abund=sum(rel_abund)) %>%
+  distinct(Genus, .keep_all=TRUE)%>%
+  mutate(av_abund=mean(sum_abund)) %>%
+  ggplot(aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+
+  facet_grid(.~Disease_Status, scales="free")+scale_fill_manual(values=mycol)+labs(title="Sinus samples", y=NULL)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none",plot.title = element_text(size=10)) 
+
+grid.arrange(E1,E2,nrow=2, top="Unclassified Enterobacteriaceae relative abundance", left="Average relative abundance (%)")
+
+#Look at Corynebacterium OTUs
+top10_cory<-data.frame(otu_smelt %>% filter(Genus=="g__Corynebacterium") %>% group_by(OTU) %>% mutate(sum_otu=sum(Abundance)) %>% distinct(OTU, .keep_all=TRUE) %>% select(OTU,Genus, Species, sum_otu) %>% arrange(desc(sum_otu)))$OTU[1:10]
+
+cory_otus<-otu_smelt %>% filter(Genus=="g__Corynebacterium") %>% filter(OTU %in% top10_cory) %>% mutate(rel_abund=Abundance/6000*100) %>% filter(Disease_Status!="NA")
+ggplot(cory_otus, aes(x=Patient,y=rel_abund))+geom_boxplot()+facet_grid(OTU~Disease_Status, scales="free")+labs(title="Top 10 Corynbacterium OTU relative abudnance accross patients")
+
+
+
+#Look at anaerobes
+data.frame(genus_plots %>% arrange(Patient) %>% select(Patient,Genus, av_abund,Disease_Status) %>% filter(Genus %in% c("g__Actinomyces", "g__Dialister","g__Megasphera", "g__Parvimonas","g__Porphyromonas","g__Prevotella","g__Anaerococcus","g__Finegoldia", "g__Peptinophillus","g__Prevotella","g__Fusobacterium")) %>% arrange(Genus, desc(av_abund)))
+
+
+
+anaerobes<-sinus_plots %>% group_by(Sample,Genus)%>%
+  mutate(sum_abund=sum(rel_abund)) %>% select(Patient,Genus, sum_abund,Disease_Status,Sinus,Sample) %>% filter(Genus %in% c("g__Actinomyces", "g__Dialister","g__Megasphera","g__Parvimonas","g__Porphyromonas","g__Prevotella", "g__Anaerococcus","g__Finegoldia","g__Peptinophillus","g__Prevotella","g__Fusobacterium")) %>% arrange(Genus,desc(sum_abund)) %>% distinct(Genus, .keep_all=TRUE) %>% arrange(Sample,Patient)
+
+anaerobes$Sinus2<-gsub("[0-9]+([A-Z]+)","\\1",anaerobes$Sample)
+
+ggplot(anaerobes, aes(x=Sinus,y=sum_abund, fill=Genus))+geom_bar(stat="identity")+
+  facet_grid(Patient~Disease_Status, scales="free")
+library("RColorBrewer")
+
+anaerobes %>% filter(Disease_Status=="CRS") %>% ggplot(aes(x=Sinus2,y=sum_abund, fill=Genus))+geom_bar(stat="identity")+
+  facet_wrap(~Patient, 7,7, scales="free")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  scale_fill_brewer(palette="Set1")+labs()
+
+anaerobes %>% filter(Disease_Status=="CONTROL") %>% ggplot(aes(x=Sinus2,y=sum_abund, fill=Genus))+geom_bar(stat="identity")+
+  facet_wrap(~Patient, 3,4, scales="free")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 genus_plot_sig_sinus<-sinus_plots %>%
   filter(Genus %in% c("g__Corynebacterium","g__Alloiococcus","g__Staphylococcus") | Family=="f__Enterobacteriaceae") %>%
@@ -738,6 +805,12 @@ anova(lmer(value ~ comp + D1 + (1|P1), data=uwuf_intra2))
 #subset to CRS only and repeat
 uwuf_intra2_CRS<-uwuf_intra2 %>% filter(D1=="CRS")
 anova(lmer(value ~ comp + (1|P1), data=uwuf_intra2_CRS))
+uwuf_intra2_CRS_S_M<-uwuf_intra2 %>% filter(comp!="NvS")
+anova(lmer(value ~ comp + (1|P1), data=uwuf_intra2_CRS_S_M))
+uwuf_intra2_CRS_N_M<-uwuf_intra2 %>% filter(comp!="SvS")
+anova(lmer(value ~ comp + (1|P1), data=uwuf_intra2_CRS_N_M))
+uwuf_intra2_CRS_S_N<-uwuf_intra2 %>% filter(comp!="MMvS")
+anova(lmer(value ~ comp + (1|P1), data=uwuf_intra2_CRS_S_N))
 #subset to control only and repeat
 uwuf_intra2_control<-uwuf_intra2 %>% filter(D1=="CONTROL")
 anova(lmer(value ~ comp + (1|P1), data=uwuf_intra2_control))
