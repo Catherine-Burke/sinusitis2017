@@ -18,6 +18,7 @@ library("reshape2")
 library("tidyverse")
 library("lme4")
 library("lmerTest")
+library("gridExtra")
 #library("SpiecEasi")
 #library("igraph")
 #library("mixOmics")
@@ -204,6 +205,20 @@ plot_richness(Sinus_only, x="Disease_Status", measures=c("Observed", "Chao1","Sh
   theme(plot.title = element_text(hjust = 0.5)) + 
   theme(axis.text=element_text(size=12), axis.title = element_text (size=20, face = "bold")) + theme(plot.title = element_text(size = rel(2))) + 
   theme(strip.text.x = element_text(size = 15)) + theme(legend.position='none')
+
+#Use ggplot for better plots:
+sinus_alpha<-data.frame(estimate_richness(sinus2017_rare,measures=c("Observed","Chao1","Shannon")))
+sinus_alpha<-cbind(sinus_alpha,sample_data(sinus2017_rare))
+sinus_nostMM<-subset(sinus_alpha, Sinus %in% c("NOST", "MM"))
+sinus_alpha_sinus<- subset(sinus_alpha, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
+alpha_MM<-subset(sinus_alpha, Sinus=="MM")
+sinus_alpha_CRS<-subset(sinus_alpha_sinus, Disease_Status=="CRS" & NP_Status!="NA")
+
+sinus_alpha_plot<-ggplot(sinus_alpha_sinus,aes(x=Disease_Status, y=Shannon, fill=Disease_Status))+geom_boxplot()+theme(legend.position='none')+ylim(0,4)
+
+CRS_alpha_plot<-ggplot(sinus_alpha_CRS,aes(x=NP_Status, y=Shannon))+geom_boxplot(aes(fill="#00BFC4"))+theme(legend.position='none')+ylim(0,4)+ scale_fill_manual(values="#00BFC4")
+
+Figure1AB<-grid.arrange(sinus_alpha_plot, CRS_alpha_plot, ncol=2)
 
 plot_richness(Sinus_only_CRS, x="NP_Status", measures=c("Observed", "Chao1","Shannon")) +
   geom_boxplot(fill="#00BFC4") + xlab("Nasal Polyp Status") + 
@@ -497,14 +512,15 @@ ggplot(anaerobes, aes(x=Sinus,y=sum_abund, fill=Genus))+geom_bar(stat="identity"
   facet_grid(Patient~Disease_Status, scales="free")
 library("RColorBrewer")
 
-anaerobes %>% filter(Disease_Status=="CRS") %>% ggplot(aes(x=Sinus2,y=sum_abund, fill=Genus))+geom_bar(stat="identity")+
+figureS2<-anaerobes %>% filter(Disease_Status=="CRS") %>% ggplot(aes(x=Sinus2,y=sum_abund, fill=Genus))+geom_bar(stat="identity")+
   facet_wrap(~Patient, 7,7, scales="free")+
   theme(axis.text.x = element_text(angle = 90, hjust = 1))+
-  scale_fill_brewer(palette="Set1")+labs()
+  scale_fill_brewer(palette="Set1")+labs(x="Sinus",y="Relative abundance %", title="Anaerobes in CRS Sinuses")+ylim(0,90)
 
-anaerobes %>% filter(Disease_Status=="CONTROL") %>% ggplot(aes(x=Sinus2,y=sum_abund, fill=Genus))+geom_bar(stat="identity")+
+figureS3<-anaerobes %>% filter(Disease_Status=="CONTROL") %>% ggplot(aes(x=Sinus2,y=sum_abund, fill=Genus))+geom_bar(stat="identity")+
   facet_wrap(~Patient, 3,4, scales="free")+
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  scale_fill_brewer(palette="Set1")+labs(x="Sinus",y="Relative abundance %", title="Anaerobes in Control Sinuses")+ylim(0,50)
 
 genus_plot_sig_sinus<-sinus_plots %>%
   filter(Genus %in% c("g__Corynebacterium","g__Alloiococcus","g__Staphylococcus") | Family=="f__Enterobacteriaceae") %>%
@@ -856,10 +872,12 @@ indplot<-cor_otu_data %>% filter(OTU %in% c("410908","1075821")) %>%
   ggplot(aes(x=rel_abund, y=SNOT22)) + 
   geom_point(aes(color=Patient))+
   geom_smooth(method=lm)+
-  labs(title="SNOT22 vs abundance",x="relative abundance (%)")+
-  ylim(0,100)+facet_grid(.~Genus, scales="free")
+  labs(x="Relative Abundance %",y="SNOT-22")+
+  ylim(0,100)+xlim(0,100)+facet_grid(.~Genus, scales="free")
 
-indplot + facet_wrap(~SNOT22,7,5)
+text_otu<-cor_otu_data %>% filter(OTU %in% c("410908","1075821"))  %>% distinct(OTU, .keep_all=TRUE)
+
+indplot2<-indplot +geom_text(data=text_otu,aes(x=50, y=100,label=OTU),size=3)
 
 corr <- cor.test(x=corr_data$rel_abund, y=corr_data$SNOT22, method = 'spearman')
 corr
@@ -890,10 +908,17 @@ gen_plot<-ggplot(genera_sums,aes(x=gen_sums, y=snot22))+geom_point(aes(colour=Pa
 
 #Geom text looks bad because it's putting the text on multiple times from the data. Get new data frame with only one entry per family.
 text_data<-genera_sums %>% group_by(Family) %>% distinct(Family, .keep_all = TRUE)
+text_data2<-genera_best %>% group_by(Family) %>% distinct(Family, .keep_all = TRUE)
 
 gen_plot+geom_text(data=text_data,aes(x=50, y=90,label=Genus),size=3)
 
+#Only plot the interesting ones
+genera_best<-genera_sums %>% filter(Genus %in% c("g__Streptococcus", "g__Corynebacterium", "g__Haemophilus") | (Family %in% c("f__Enterobacteriaceae","f__Neisseriaceae") & Genus=="g__"))
 
+gen_best<-ggplot(genera_best,aes(x=gen_sums, y=snot22))+geom_point(aes(colour=Patient))+
+  geom_smooth(method=lm, fullrange=TRUE)+labs(x="relative abundance (%)")+ylim(0,100)+facet_wrap(~Family,2,3)+labs(y="SNOT-22", x="Relative Abundance %")+ theme(legend.position='none')
+gen_best2<-gen_best+geom_text(data=text_data2,aes(x=50, y=100,label=Genus),size=3)
+grid.arrange(indplot2,gen_best2,ncol=2)
 
 #Individual Genera
 genera_sums %>% filter(Genus=="g__Corynebacterium") %>%
