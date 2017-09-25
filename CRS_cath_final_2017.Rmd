@@ -258,13 +258,20 @@ alpha_MM<-subset(sinus_alpha, Sinus=="MM")
 #Try using nested one-way anova to test for difference between CRS and controls
 library(lme4)
 library(lmerTest)
-#Disease Status
+#Disease Status all
 anova(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_alpha))
 rand(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_alpha))
 anova(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_alpha))
 rand(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_alpha))
 anova(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_alpha))
 rand(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_alpha))
+#Disease Status sinuses only
+anova(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_alpha_sinus))
+rand(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_alpha_sinus))
+anova(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_alpha_sinus))
+rand(lmer(Observed ~ Disease_Status + (1|Patient), data=sinus_alpha_sinus))
+anova(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_alpha_sinus))
+rand(lmer(Chao1 ~ Disease_Status + (1|Patient), data=sinus_alpha_sinus))
 #And now in nost and MM samples
 anova(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_nostMM))
 rand(lmer(Shannon ~ Disease_Status + (1|Patient), data=sinus_nostMM))
@@ -310,7 +317,7 @@ rand(lmer(Chao1 ~ Sinus + (1|Patient), data=sinus_alpha_Control))
 
 #Look at the evenness between CRS and Control
 library(tidyverse)
-Patient_evenness<-mutate(Patient_richness, evenness=Shannon/log(Observed))
+Patient_evenness<-mutate(sinus_alpha, evenness=Shannon/log(Observed))
 Patient_evenness<-subset(Patient_evenness, Sinus %in% c("ETH", "MAX", "SPH", "FRO"))
 anova(lmer(evenness ~ Disease_Status + (1|Patient), data=Patient_evenness))
 rand(lmer(evenness ~ Disease_Status + (1|Patient), data=Patient_evenness))
@@ -473,20 +480,28 @@ entero<-otu_smelt %>%
   filter(Family=="f__Enterobacteriaceae") %>% filter(Genus=="g__")
 
 E1<-entero %>% filter(Sinus=="MM") %>%
-  group_by(Patient) %>% mutate(sum_abund=sum(rel_abund)) %>%
-  distinct(Genus, .keep_all=TRUE)%>%
+  group_by(Sample,Family) %>% mutate(sum_abund=sum(rel_abund)) %>%
+  group_by(Sample,Patient)%>%
+  distinct(Family, .keep_all=TRUE)%>%
+  group_by(Patient)%>%
   mutate(av_abund=mean(sum_abund)) %>%
+  distinct(Patient, .keep_all=TRUE) %>%
   ggplot(aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+
   facet_grid(.~Disease_Status, scales="free")+scale_fill_manual(values=mycol)+labs(title="Middle meatus samples", y=NULL, x=NULL)+
-  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none",plot.title = element_text(size=10))
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none",plot.title = element_text(size=10))+
+  ylim(0,50)
 
 E2<-entero %>% filter(Sinus!="MM") %>%
-  group_by(Patient) %>% mutate(sum_abund=sum(rel_abund)) %>%
-  distinct(Genus, .keep_all=TRUE)%>%
+  group_by(Sample,Family) %>% mutate(sum_abund=sum(rel_abund)) %>%
+  group_by(Sample,Patient)%>%
+  distinct(Family, .keep_all=TRUE)%>%
+  group_by(Patient) %>%
   mutate(av_abund=mean(sum_abund)) %>%
+  distinct(Patient, .keep_all=TRUE) %>%
   ggplot(aes(x=Patient, y=av_abund, fill=Genus))+geom_bar(stat="identity")+
   facet_grid(.~Disease_Status, scales="free")+scale_fill_manual(values=mycol)+labs(title="Sinus samples", y=NULL)+
-  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none",plot.title = element_text(size=10)) 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none",plot.title = element_text(size=10))+
+  ylim(0,50)
 
 grid.arrange(E1,E2,nrow=2, top="Unclassified Enterobacteriaceae relative abundance", left="Average relative abundance (%)")
 
@@ -733,6 +748,12 @@ disease_status<-data.frame(unique(sample_data(sinus2017_rare_fil2)[,c("Patient",
 test2_m$D1<-disease_status[match(test2_m$P1, disease_status$Patient),2]
 test2_m$D2<-disease_status[match(test2_m$P2, disease_status$Patient),2]
 #Now should be able to subset any way I want with dplyr
+intra_inter<-test2_m %>% mutate(comp_type=ifelse(P1==P2, "intra", "inter")) %>%
+  filter(!S1 %in% c("NOST","LMM","RMM") & !S2 %in% c("NOST","LMM","RMM"))
+anova(lmer(value ~ comp_type + (1|P2), data=intra_inter))
+
+ggplot(intra_inter, aes(x=comp_type, y=value))+geom_boxplot()+facet_grid(.~D1, scales="free")
+
 #Try getting all intrapersonal comparisons, for sinuses only, and plotting by disease status.
 test<- test2_m %>% filter(!S1 %in% c("NOST","LMM","RMM") & !S2 %in% c("NOST","LMM","RMM")) %>%
   filter(P1==P2) %>% arrange(P1)
@@ -755,6 +776,14 @@ rand(lmer(value ~ D1 + (1|P2), data=test))
 average_dist<- test %>% group_by(D1,P1) %>% summarise(av_dist=mean(value)) 
 anova(lm(av_dist ~ D1, data=average_dist))
 
+#Repeat above analysis of intrapatient distances but only compare sph and MM.
+s_mm_dist<- test2_m %>% filter(S1 %in% c("LMM","RMM","LSPH","RSPH") & S2 %in% c("LMM","RMM","LSPH","RSPH")) %>%
+  filter(P1==P2) %>% arrange(P1)
+
+ggplot(s_mm_dist, aes(x=D1, y=value, fill=D1))+geom_boxplot()
+
+anova(lmer(value ~ D1 + (1|P2), data=s_mm_dist))
+anova(lm(value ~ D1, data=test))
 #Now get all nost or MM comparisons to sinuses intrapersonal comparisons, and compare to sinus vs sinus comparisons intrapersonal
 intra2<-test2_m %>% filter(P1==P2) %>%
   mutate(comp=ifelse(S1=="NOST" | S2=="NOST","NvS","SvS"),comp=ifelse(S1 %in% c("LMM","RMM") | S2 %in% c("LMM","RMM"),"MMvS",comp))
@@ -763,10 +792,21 @@ ggplot(intra2, aes(x=comp, y=value, fill=D1))+geom_boxplot() +
   facet_wrap(~P1,5,7,scales="free") +
   theme(axis.text.x = element_text(size = 5,angle=90,hjust = 1),strip.text.x = element_text(size = 5))
 
+
 ggplot(intra2, aes(x=comp, y=value, fill=D1))+geom_boxplot() +
   facet_grid(~D1,scales="free") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
   labs(title="Intra-patient distances between MM and sinuses, nostril and sinuses\nand sinus vs sinus", x="comparison", y="weighted unifrac distance")
+
+intra3<-intra2 %>% filter(comp!="NvS")
+mm_dist_plot<-ggplot(intra3, aes(x=comp, y=value, fill=D1))+geom_boxplot() +
+  facet_grid(~D1,scales="free") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none")+
+  labs(x="Comparison", y="Weighted unifrac distance")
+
+grid.arrange(mm_dist_plot, arrangeGrob(E1,E2,nrow=2,left="Average relative abundance (%)"), ncol=2)
+grid.arrange(E1,E2,nrow=2, top="Unclassified Enterobacteriaceae relative abundance", left="Average relative abundance (%)")
+grid.arrange(P1, arrangeGrob(P2,P3,ncol=1), ncol=2)
 #Next need to do a test for significant difference between comparisons.
 intra2$P1<-as.factor(intra2$P1)
 intra2$comp<-as.factor(intra2$comp)
